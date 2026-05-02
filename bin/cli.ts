@@ -158,7 +158,7 @@ ${issueText}
             createPullRequest,
             createIssueComment,
         },
-        maxSteps: 20,
+        maxSteps: 30,
         useStreaming: streamMode,
         // Yoloモードなら自動承認
         approvalFunc: yoloMode ? async (name) => {
