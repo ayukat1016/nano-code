@@ -16,8 +16,8 @@ async function main() {
     const googleModel = process.env.GOOGLE_MODEL_ID ?? 'gemini-2.5-flash';
 
     console.log('--- OpenAI ---');
-    const openai = createOpenAI();
     try {
+        const openai = createOpenAI();
         const res1 = await generateText({ model: openai(openaiModel), messages });
         console.log('Result:', res1.text);
     } catch (error) {
@@ -25,8 +25,8 @@ async function main() {
     }
 
     console.log('\n--- Anthropic ---');
-    const anthropic = createAnthropic();
     try {
+        const anthropic = createAnthropic();
         const res2 = await generateText({ model: anthropic(anthropicModel), messages });
         console.log('Result:', res2.text);
     } catch (error) {
@@ -34,8 +34,8 @@ async function main() {
     }
 
     console.log('\n--- Google ---');
-    const google = createGoogle();
     try {
+        const google = createGoogle();
         const res3 = await generateText({ model: google(googleModel), messages });
         console.log('Result:', res3.text);
     } catch (error) {

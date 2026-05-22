@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type {
+    FinishReason,
     GenerateParams,
     GenerateTextResult,
     LanguageModel,
@@ -9,7 +10,6 @@ import type {
     ToolCall,
 } from '../types';
 import { LLMApiError } from '../types';
-import type { ProviderConfig } from './openai';
 
 type ResponsesInput = OpenAI.Responses.ResponseInputItem;
 
@@ -82,7 +82,10 @@ function convertToolsToFunctions(
     }));
 }
 
-function mapFinishReason(status?: string): GenerateTextResult['finishReason'] {
+// finishReasonマッピング
+function mapFinishReason(
+    status?: string
+): FinishReason {
     switch (status) {
         case 'completed':
             return 'stop';
@@ -142,7 +145,11 @@ function convertResponseToResult(
     };
 }
 
-export function createOpenAIResponses(config: ProviderConfig = {}): Provider {
+export function createOpenAIResponses(config: {
+    apiKey?: string;
+    baseURL?: string;
+    maxRetries?: number;
+} = {}): Provider {
     const apiKey = config.apiKey ?? process.env.OPENAI_API_KEY;
     const baseURL = config.baseURL ?? 'https://api.openai.com/v1';
 
@@ -183,16 +190,12 @@ export function createOpenAIResponses(config: ProviderConfig = {}): Provider {
                 return convertResponseToResult(response);
             } catch (error) {
                 if (error instanceof OpenAI.APIError) {
-                    const headers = error.headers
-                        ? Object.fromEntries(error.headers.entries())
-                        : undefined;
                     throw new LLMApiError(
                         error.status ?? 500,
                         'openai-responses',
                         error.code ?? undefined,
                         error.message,
-                        error.error,
-                        headers
+                        error.error
                     );
                 }
                 throw error;
@@ -324,16 +327,12 @@ export function createOpenAIResponses(config: ProviderConfig = {}): Provider {
                 }
             } catch (error) {
                 if (error instanceof OpenAI.APIError) {
-                    const headers = error.headers
-                        ? Object.fromEntries(error.headers.entries())
-                        : undefined;
                     throw new LLMApiError(
                         error.status ?? 500,
                         'openai-responses',
                         error.code ?? undefined,
                         error.message,
-                        error.error,
-                        headers
+                        error.error
                     );
                 }
                 throw error;

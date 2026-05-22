@@ -1,147 +1,120 @@
+import OpenAI from 'openai';
 import type {
+    FinishReason,
     GenerateParams,
     GenerateTextResult,
     LanguageModel,
+    Message,
     Provider,
-    ToolCall,
     StreamChunk,
+    ToolCall,
 } from '../types';
 import { LLMApiError } from '../types';
-import OpenAI from 'openai';
 
-export type ProviderConfig = {
+export function createOpenAI(config?: {
     apiKey?: string;
     baseURL?: string;
     maxRetries?: number;
-};
+}): Provider {
+    // SDK初期化（認証はSDKが担当）
+    const client = new OpenAI({
+        apiKey: config?.apiKey, // 省略時は環境変数OPENAI_API_KEYを自動参照
+        baseURL: config?.baseURL,
+        maxRetries: config?.maxRetries ?? 0, // nano-code-coreがリトライを制御
+    });
 
-function mapOpenAIFinishReason(
-    finishReason: string | null | undefined
-): GenerateTextResult['finishReason'] {
-    switch (finishReason) {
-        case 'stop':
-            return 'stop';
-        case 'length':
-            return 'length';
-        case 'content_filter':
-            return 'content_filter';
-        case 'tool_calls':
-            return 'tool_calls';
-        default:
-            return 'stop';
-    }
-}
-
-function parseToolCallArgs(raw: string): Record<string, unknown> {
-    try {
-        return raw ? JSON.parse(raw) : {};
-    } catch {
-        return {};
-    }
-}
-
-function mapMessages(messages: GenerateParams['messages']) {
-    return messages.map((message): OpenAI.ChatCompletionMessageParam => {
-        switch (message.role) {
-            case 'assistant': {
-                const tool_calls = message.toolCalls?.map(
-                    (tc): OpenAI.ChatCompletionMessageFunctionToolCall => ({
-                        id: tc.toolCallId,
-                        type: 'function',
-                        function: {
-                            name: tc.name,
-                            arguments: JSON.stringify(tc.args),
-                        },
-                    })
-                );
+    // Nano Code Message → OpenAI形式へ変換
+    function convertMessages(messages: Message[]) {
+        return messages.map((m) => {
+            if (m.role === 'tool') {
                 return {
-                    role: 'assistant',
-                    content: message.content,
-                    ...(tool_calls && tool_calls.length > 0 ? { tool_calls } : {}),
+                    role: 'tool' as const,
+                    tool_call_id: m.toolCallId,
+                    content: m.content,
                 };
             }
-            case 'tool':
+            if (m.role === 'assistant' && m.toolCalls) {
                 return {
-                    role: 'tool',
-                    content: message.content,
-                    tool_call_id: message.toolCallId,
+                    role: 'assistant' as const,
+                    content: m.content,
+                    tool_calls: m.toolCalls.map((tc) => ({
+                        id: tc.toolCallId,
+                        type: 'function' as const,
+                        function: { name: tc.name, arguments: JSON.stringify(tc.args) },
+                    })),
                 };
-            case 'user':
-                return { role: 'user', content: message.content };
-            case 'system':
-                return { role: 'system', content: message.content };
-        }
-    });
-}
-
-export function createOpenAI(config: ProviderConfig = {}): Provider {
-    const apiKey = config.apiKey ?? process.env.OPENAI_API_KEY;
-    const baseURL = config.baseURL ?? 'https://api.openai.com/v1';
-
-    if (!apiKey) {
-        throw new LLMApiError(401, 'openai', undefined, 'OPENAI_API_KEY環境変数が必要です');
+            }
+            return { role: m.role, content: m.content };
+        });
     }
 
-    const client = new OpenAI({
-        apiKey,
-        baseURL,
-        maxRetries: config.maxRetries ?? 0,
-    });
+    // finishReasonマッピング
+    function mapFinishReason(
+        reason: string | null
+    ): FinishReason {
+        switch (reason) {
+            case 'stop':
+                return 'stop';
+            case 'length':
+                return 'length';
+            case 'content_filter':
+                return 'content_filter';
+            case 'tool_calls':
+                return 'tool_calls';
+            default:
+                return 'stop';
+        }
+    }
 
-    const provider = (modelId: string): LanguageModel => ({
+    return (modelId: string): LanguageModel => ({
         async doGenerate(params: GenerateParams): Promise<GenerateTextResult> {
-            const tools =
-                params.tools && params.tools.length > 0
-                    ? params.tools.map((tool) => ({
-                          type: 'function' as const,
-                          function: {
-                              name: tool.name,
-                              description: tool.description,
-                              parameters: tool.parameters,
-                          },
-                      }))
-                    : undefined;
+            // ツール定義をOpenAI形式に変換
+            const tools = params.tools?.map((tool) => ({
+                type: 'function' as const,
+                function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                },
+            }));
 
             try {
+                // 1. SDKで生成を実行
                 const completion = await client.chat.completions.create(
                     {
                         model: modelId,
-                        messages: mapMessages(params.messages),
+                        messages: convertMessages(params.messages) as OpenAI.ChatCompletionMessageParam[],
                         temperature: params.temperature,
-                        ...(params.maxTokens !== undefined && {
-                            max_completion_tokens: params.maxTokens,
-                        }),
-                        ...(tools && { tools }),
+                        max_completion_tokens: params.maxTokens,
+                        ...(tools && tools.length > 0 && { tools }),
                     },
                     { signal: params.signal }
                 );
 
+                // 3. SDKの応答を統一型に変換
                 const choice = completion.choices[0];
                 if (!choice) {
-                    throw new LLMApiError(500, 'openai', undefined, 'APIからの応答がありません');
+                    throw new LLMApiError(
+                        500,
+                        'openai',
+                        undefined,
+                        'APIからの応答がありません'
+                    );
                 }
                 const message = choice.message;
 
-                const functionToolCalls =
-                    message.tool_calls?.filter(
-                        (
-                            tc
-                        ): tc is OpenAI.ChatCompletionMessageFunctionToolCall =>
-                            tc.type === 'function'
-                    ) ?? [];
-
-                const toolCalls: ToolCall[] | undefined =
-                    functionToolCalls.length > 0
-                        ? functionToolCalls.map((tc) => ({
-                              toolCallId: tc.id,
-                              name: tc.function.name,
-                              args: parseToolCallArgs(tc.function.arguments),
-                          }))
-                        : undefined;
+                const toolCalls: ToolCall[] | undefined = message.tool_calls?.map(
+                    (tc: any) => ({
+                        toolCallId: tc.id,
+                        name: tc.function.name,
+                        args: JSON.parse(tc.function.arguments),
+                    })
+                );
 
                 return {
                     text: message.content ?? '',
-                    finishReason: mapOpenAIFinishReason(choice.finish_reason),
+                    finishReason: mapFinishReason(choice.finish_reason),
+                    toolCalls,
                     usage: completion.usage
                         ? {
                               promptTokens: completion.usage.prompt_tokens,
@@ -149,50 +122,44 @@ export function createOpenAI(config: ProviderConfig = {}): Provider {
                               totalTokens: completion.usage.total_tokens,
                           }
                         : undefined,
-                    toolCalls,
                 };
             } catch (error) {
+                // 2. SDKの例外をLLMApiErrorに変換
                 if (error instanceof OpenAI.APIError) {
-                    const headers = error.headers
-                        ? Object.fromEntries(error.headers.entries())
-                        : undefined;
                     throw new LLMApiError(
                         error.status ?? 500,
                         'openai',
                         error.code ?? undefined,
                         error.message,
-                        error.error,
-                        headers
+                        error
                     );
                 }
                 throw error;
             }
         },
+        // Appendix Aで実装
         async *doStream(params: GenerateParams): AsyncIterable<StreamChunk> {
-            const tools =
-                params.tools && params.tools.length > 0
-                    ? params.tools.map((tool) => ({
-                          type: 'function' as const,
-                          function: {
-                              name: tool.name,
-                              description: tool.description,
-                              parameters: tool.parameters,
-                          },
-                      }))
-                    : undefined;
+            const tools = params.tools?.map((tool) => ({
+                type: 'function' as const,
+                function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.parameters,
+                },
+            }));
 
             try {
                 const stream = await client.chat.completions.create(
                     {
                         model: modelId,
-                        messages: mapMessages(params.messages),
+                        messages: convertMessages(params.messages) as OpenAI.ChatCompletionMessageParam[],
                         temperature: params.temperature,
                         ...(params.maxTokens !== undefined && {
                             max_completion_tokens: params.maxTokens,
                         }),
                         stream: true,
                         stream_options: { include_usage: true },
-                        ...(tools && { tools }),
+                        ...(tools && tools.length > 0 && { tools }),
                     },
                     { signal: params.signal }
                 );
@@ -231,7 +198,7 @@ export function createOpenAI(config: ProviderConfig = {}): Provider {
                     }
 
                     if (choice?.finish_reason) {
-                        finishReason = mapOpenAIFinishReason(choice.finish_reason);
+                        finishReason = mapFinishReason(choice.finish_reason);
                     }
 
                     if (chunk.usage) {
@@ -246,7 +213,7 @@ export function createOpenAI(config: ProviderConfig = {}): Provider {
                 const toolCalls = Object.values(toolCallBuffer).map((tc) => ({
                     toolCallId: tc.id,
                     name: tc.name,
-                    args: parseToolCallArgs(tc.argsText),
+                    args: tc.argsText ? JSON.parse(tc.argsText) : {},
                 }));
 
                 yield {
@@ -257,21 +224,16 @@ export function createOpenAI(config: ProviderConfig = {}): Provider {
                 };
             } catch (error) {
                 if (error instanceof OpenAI.APIError) {
-                    const headers = error.headers
-                        ? Object.fromEntries(error.headers.entries())
-                        : undefined;
                     throw new LLMApiError(
                         error.status ?? 500,
                         'openai',
                         error.code ?? undefined,
                         error.message,
-                        error.error,
-                        headers
+                        error
                     );
                 }
                 throw error;
             }
         },
     });
-    return provider;
 }
