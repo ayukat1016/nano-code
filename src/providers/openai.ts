@@ -66,6 +66,20 @@ export function createOpenAI(config?: {
         }
     }
 
+    // OpenAI APIがツール引数として返すJSON文字列を安全にパースするヘルパー。
+    // 付録Aのスニペットでは直接 JSON.parse() を呼んでいるが、APIが壊れたJSONを返す
+    // エッジケース（ネットワーク中断・プロキシ介入等）でも SyntaxError が呼び出し元に
+    // 伝播しないよう、配布コードでは {} にフォールバックする形に変更している。
+    function parseToolCallArgs(argsText: string | undefined): Record<string, unknown> {
+        if (!argsText) return {};
+        try {
+            return JSON.parse(argsText);
+        } catch {
+            // 不正なJSONの場合は空オブジェクトを返す（SyntaxErrorを伝播させない）
+            return {};
+        }
+    }
+
     return (modelId: string): LanguageModel => ({
         async doGenerate(params: GenerateParams): Promise<GenerateTextResult> {
             // ツール定義をOpenAI形式に変換
@@ -107,7 +121,7 @@ export function createOpenAI(config?: {
                     (tc: any) => ({
                         toolCallId: tc.id,
                         name: tc.function.name,
-                        args: JSON.parse(tc.function.arguments),
+                        args: parseToolCallArgs(tc.function.arguments),
                     })
                 );
 
@@ -213,7 +227,7 @@ export function createOpenAI(config?: {
                 const toolCalls = Object.values(toolCallBuffer).map((tc) => ({
                     toolCallId: tc.id,
                     name: tc.name,
-                    args: tc.argsText ? JSON.parse(tc.argsText) : {},
+                    args: parseToolCallArgs(tc.argsText),
                 }));
 
                 yield {

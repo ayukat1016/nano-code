@@ -95,4 +95,33 @@ describe('Google Provider', () => {
             },
         ]);
     });
+
+    it('doGenerate handles missing or nullish args in tool calls', async () => {
+        mockGenerateContent.mockResolvedValue({
+            candidates: [
+                {
+                    content: {
+                        parts: [
+                            {
+                                functionCall: {
+                                    name: 'readFile',
+                                    args: null,
+                                },
+                            },
+                        ],
+                    },
+                    finishReason: 'STOP',
+                },
+            ],
+        });
+
+        const provider = createGoogle({ apiKey: 'test-key' });
+        const model = provider('gemini-2.5-flash');
+
+        const messages: Message[] = [{ role: 'user', content: 'ファイル読んで' }];
+        const result = await model.doGenerate({ messages });
+
+        expect(result.toolCalls).toBeDefined();
+        expect(result.toolCalls![0]!.args).toEqual({});
+    });
 });

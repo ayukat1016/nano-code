@@ -92,4 +92,37 @@ describe('OpenAI Provider', () => {
             },
         ]);
     });
+
+    it('doGenerate handles malformed JSON in tool calls', async () => {
+        mockCreate.mockResolvedValue({
+            choices: [
+                {
+                    message: {
+                        role: 'assistant',
+                        content: null,
+                        tool_calls: [
+                            {
+                                id: 'call_123',
+                                type: 'function',
+                                function: {
+                                    name: 'readFile',
+                                    arguments: 'malformed_json_here',
+                                },
+                            },
+                        ],
+                    },
+                    finish_reason: 'tool_calls',
+                },
+            ],
+        });
+
+        const provider = createOpenAI({ apiKey: 'test-key' });
+        const model = provider('gpt-5-mini');
+
+        const messages: Message[] = [{ role: 'user', content: 'ファイルを読んで' }];
+        const result = await model.doGenerate({ messages });
+
+        expect(result.toolCalls).toBeDefined();
+        expect(result.toolCalls![0]!.args).toEqual({});
+    });
 });

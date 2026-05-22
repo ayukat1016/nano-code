@@ -278,6 +278,11 @@
             <ul>
               <li><a href="#ch08-5-sandbox-cli-command">8.5 節 サンドボックス動作確認コマンドのファイルパス</a></li>
             </ul>
+            <h3>付録 A</h3>
+            <ul>
+              <li><a href="#appendix-a-tool-call-id">付録 A Google ストリーミング時の toolCallId 生成方式</a></li>
+              <li><a href="#appendix-a-parse-error">付録 A OpenAI ツール引数の JSON パースエラー処理</a></li>
+            </ul>
           </nav>
         </aside>
 
@@ -568,6 +573,71 @@ ${issueText}
     </dl>
   </article>
 </section>
+
+          <section class="chapter-group">
+            <h2>付録 A</h2>
+
+            <article id="appendix-a-tool-call-id">
+              <header>
+                <span class="chapter-label">付録 A</span>
+                <h3>Google ストリーミング時の toolCallId 生成方式</h3>
+                <a class="anchor" href="#appendix-a-tool-call-id">#</a>
+              </header>
+              <dl>
+                <dt>本書の記載</dt>
+                <dd>
+                  <p>付録 A のストリーミング実装スニペット（<code>doStream</code>）では、Gemini API がツール呼び出し ID を返さないため、<code>part.functionCall.name</code>（関数名）をそのまま <code>toolCallId</code> として使用しています。</p>
+                  <pre><code>const id = part.functionCall.name;
+toolCalls[id] = { toolCallId: id, name: part.functionCall.name, ... };</code></pre>
+                </dd>
+                <dt>配布コードとの差異</dt>
+                <dd>
+                  <p>書籍のスニペット通りに実装した場合、同一関数を複数回呼び出すレスポンス（例：<code>readFile</code> を 2 回呼んで異なるファイルを読む）では、後の呼び出しが前の呼び出しを上書きしてしまい、ツール呼び出しが欠落します。</p>
+                  <p>配布リポジトリでは <code>doGenerate</code>（非ストリーミング）との一貫性を保ちつつ、この問題を回避するため、連番方式（<code>call_0</code>、<code>call_1</code>、…）に変更しています。</p>
+                  <pre><code>let toolCallIndex = 0;
+// ...
+const id = `call_${toolCallIndex++}`;
+toolCalls[id] = { toolCallId: id, name: part.functionCall.name, ... };</code></pre>
+                </dd>
+                <dt>対処</dt>
+                <dd>
+                  <p>書籍どおりに写経して進める場合、単一の関数を呼び出すユースケースでは問題なく動作します。同一関数の複数回呼び出しを正しく扱いたい場合は、配布コードの連番方式を採用してください。</p>
+                </dd>
+              </dl>
+            </article>
+
+            <article id="appendix-a-parse-error">
+              <header>
+                <span class="chapter-label">付録 A</span>
+                <h3>OpenAI ツール引数の JSON パースエラー処理</h3>
+                <a class="anchor" href="#appendix-a-parse-error">#</a>
+              </header>
+              <dl>
+                <dt>本書の記載</dt>
+                <dd>
+                  <p>付録 A の <code>doGenerate</code> および <code>doStream</code> スニペットでは、OpenAI が返すツール引数の JSON 文字列を <code>JSON.parse()</code> で直接パースしています。</p>
+                </dd>
+                <dt>配布コードとの差異</dt>
+                <dd>
+                  <p>OpenAI API がネットワーク障害・プロキシ介入等の影響で不正な JSON を返した場合、<code>JSON.parse()</code> が <code>SyntaxError</code> をスローし、<code>catch</code> ブロックの <code>OpenAI.APIError</code> チェックをすり抜けて呼び出し元に伝播します。</p>
+                  <p>配布リポジトリでは <code>parseToolCallArgs()</code> ヘルパーを用い、パース失敗時は <code>{}</code>（空オブジェクト）を返すことで <code>SyntaxError</code> の伝播を防いでいます。</p>
+                </dd>
+                <dt>対処</dt>
+                <dd>
+                  <p>書籍どおりに写経する場合、通常の利用では問題になりません。堅牢性を高めたい場合は以下のヘルパーを追加してください。</p>
+                  <pre><code>function parseToolCallArgs(argsText: string | undefined): Record&lt;string, unknown&gt; {
+  if (!argsText) return {};
+  try {
+    return JSON.parse(argsText);
+  } catch {
+    return {};
+  }
+}</code></pre>
+                </dd>
+              </dl>
+            </article>
+
+          </section>
 
         </div>
       </div>

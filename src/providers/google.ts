@@ -125,7 +125,9 @@ export function createGoogle(config?: { apiKey?: string }): Provider {
                         ? functionCallParts.map((p: any, i: number) => ({
                               toolCallId: `call_${i}`, // Gemini APIはIDを返さないため生成
                               name: p.functionCall.name,
-                              args: p.functionCall.args,
+                              // 引数なしの関数呼び出し時に args が null/undefined となる場合があるため
+                              // 配布コードでは書籍のスニペットから ?? {} を追加している
+                              args: p.functionCall.args ?? {},
                           }))
                         : undefined;
 
@@ -188,6 +190,7 @@ export function createGoogle(config?: { apiKey?: string }): Provider {
                 });
 
                 const toolCalls: Record<string, ToolCall> = {};
+                let toolCallIndex = 0;
                 let finishReason: StreamChunk['finishReason'];
                 let usage: StreamChunk['usage'];
 
@@ -201,13 +204,15 @@ export function createGoogle(config?: { apiKey?: string }): Provider {
                         }
 
                         if (part.functionCall) {
-                            // 書籍の記述（付録A）に合わせ、関数名をそのままIDとして使用
-                            // ※非ストリーミング（doGenerate）の連番によるID生成とは異なる点に注意
-                            const id = part.functionCall.name;
+                            // 書籍付録Aのスニペットでは関数名をそのままIDとして使用しているが、
+                            // 同一関数の複数回呼び出し時に後の呼び出しが前を上書きしてしまう問題があるため、
+                            // 配布コードでは doGenerate と同様に連番式 ID（call_0, call_1, ...）を使用する。
+                            const id = `call_${toolCallIndex++}`;
                             toolCalls[id] = {
                                 toolCallId: id,
                                 name: part.functionCall.name,
-                                args: part.functionCall.args || {},
+                                // args が null/undefined の場合に備えて ?? {} を適用
+                                args: part.functionCall.args ?? {},
                             };
                         }
                     }
