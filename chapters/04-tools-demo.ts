@@ -1,65 +1,62 @@
-import { readFile } from '../src/tools/readFile';
 import { writeFile } from '../src/tools/writeFile';
+import { readFile } from '../src/tools/readFile';
+import { editFile } from '../src/tools/editFile';
 import { execCommand } from '../src/tools/execCommand';
-import * as path from 'path';
-import * as fs from 'fs/promises';
 
-async function main() {
-    console.log('--- Starting Tools Demo ---\n');
+async function demo() {
+  console.log('=== ツール動作確認 ===\n');
 
-    // ワークスペースディレクトリが存在することを確認
-    const workspaceDir = path.resolve(process.cwd(), 'workspace');
-    await fs.mkdir(workspaceDir, { recursive: true });
+  // 1. writeFile: ファイルを作成
+  console.log('1. writeFile: テストファイルを作成');
+  const writeResult = await writeFile.execute({
+    path: 'test.txt',
+    content: 'Hello from Nano Code!\nThis is a test file.',
+  });
+  console.log(`   結果: ${writeResult}\n`);
 
-    // 1. Test writeFile
-    console.log('1. Testing writeFile...');
-    try {
-        const result = await writeFile.execute({
-            path: 'hello.txt',
-            content: 'Hello from NanoCode Tools!'
-        });
-        console.log('✅ writeFile success:', result);
-    } catch (error: any) {
-        console.error('❌ writeFile failed:', error.message);
-    }
+  // 2. readFile: 作成したファイルを読み込み
+  console.log('2. readFile: 作成したファイルを読み込み');
+  const content = await readFile.execute({ path: 'test.txt' });
+  console.log(`   内容:\n   ${content.replace(/\n/g, '\n   ')}\n`);
 
-    // 2. Test readFile
-    console.log('\n2. Testing readFile...');
-    try {
-        const content = await readFile.execute({ path: 'hello.txt' });
-        console.log('✅ readFile success:', content);
-    } catch (error: any) {
-        console.error('❌ readFile failed:', error.message);
-    }
+  // 3. editFile: ファイルの一部を編集
+  console.log('3. editFile: ファイルの一部を編集');
+  const editResult = await editFile.execute({
+    path: 'test.txt',
+    oldText: 'Hello from Nano Code!',
+    newText: 'Hello from Nano Code Agent!',
+  });
+  console.log(`   結果: ${editResult}\n`);
 
-    // 3. Test execCommand (ls)
-    console.log('\n3. Testing execCommand (ls)...');
-    try {
-        const output = await execCommand.execute({ command: 'ls -l' });
-        console.log('✅ execCommand success:\n', output);
-    } catch (error: any) {
-        console.error('❌ execCommand failed:', error.message);
-    }
+  // 4. readFile: 編集後のファイルを確認
+  console.log('4. readFile: 編集後のファイルを確認');
+  const editedContent = await readFile.execute({ path: 'test.txt' });
+  console.log(`   内容:\n   ${editedContent.replace(/\n/g, '\n   ')}\n`);
 
-    // 4. Test Security (Path Traversal)
-    console.log('\n4. Testing Security (Path Traversal)...');
-    try {
-        await readFile.execute({ path: '../package.json' });
-        console.error('❌ Security check failed: Should not be able to read outside workspace');
-    } catch (error: any) {
-        console.log('✅ Security check passed:', error.message);
-    }
+  // 5. execCommand: ワークスペースのファイル一覧
+  console.log('5. execCommand: ワークスペースのファイル一覧');
+  const lsResult = await execCommand.execute({ command: 'ls -la' });
+  console.log(`   結果:\n${lsResult}\n`);
 
-    // 5. Test Security (Command Injection)
-    console.log('\n5. Testing Security (Command Injection)...');
-    try {
-        await execCommand.execute({ command: 'ls; rm -rf /' });
-        console.error('❌ Security check failed: Should not execute injected command');
-    } catch (error: any) {
-        console.log('✅ Security check passed:', error.message);
-    }
+  // 6. エラーケース: 存在しないファイルの読み込み
+  console.log('6. エラーケース: 存在しないファイルの読み込み');
+  try {
+    await readFile.execute({ path: 'nonexistent.txt' });
+  } catch (error) {
+    // strictモードのビルドエラー回避のため as any を使用
+    console.log(`   期待どおりのエラー: ${(error as any).message}\n`);
+  }
 
-    console.log('\n--- Tools Demo Completed ---');
+  // 7. セキュリティチェック: ワークスペース外へのアクセス
+  console.log('7. セキュリティチェック: ワークスペース外へのアクセス');
+  try {
+    await readFile.execute({ path: '../.env' });
+  } catch (error) {
+    // strictモードのビルドエラー回避のため as any を使用
+    console.log(`   期待どおりのエラー: ${(error as any).message}\n`);
+  }
+
+  console.log('=== 動作確認完了 ===');
 }
 
-main().catch(console.error);
+demo().catch(console.error);

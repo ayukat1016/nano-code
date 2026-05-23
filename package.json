@@ -7,7 +7,7 @@
   "scripts": {
     "agent": "bun run bin/cli.ts",
     "action": "bun run bin/action.ts",
-    "test": "bun test workspace/calculator.test.ts src/core/generate-text.test.ts src/core/generate-stream.test.ts"
+    "test": "bun test"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
