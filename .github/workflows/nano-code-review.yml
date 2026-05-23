@@ -1,0 +1,47 @@
+name: Nano Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# 連続プッシュ時に実行中の古いジョブを自動キャンセルする設定
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  review:
+    # コミッタ（OWNER, MEMBER, COLLABORATOR）が作成したPRにのみ動作
+    if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
+    runs-on: ubuntu-latest
+    
+    # 人間の承認（Approve）を必要とする Environment を指定
+    environment: secure-agent
+    
+    permissions:
+      contents: read
+      pull-requests: write # PRにレビューコメントを投稿するために必要
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bun をセットアップ
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: 依存パッケージをインストール
+        run: bun install --ignore-scripts
+
+      - name: Nano Code Review を実行
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+        run: bun run bin/review.ts --yolo
