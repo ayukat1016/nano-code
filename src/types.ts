@@ -33,20 +33,13 @@ export type Usage = {
   totalTokens?: number;
 };
 
-// ストリーミングレスポンスの読み取り時に発行されるチャンク
-export interface StreamChunk {
-  kind: 'delta' | 'event' | 'done';
-  text?: string;
-  finishReason?: 'stop' | 'length' | 'content_filter' | 'tool_calls' | 'error';
-  usage?: Usage;
-  toolCalls?: ToolCall[];
-  error?: unknown;
-}
+// 書籍本文（第3章）には直接の定義はないが、各プロバイダー間の整合性と保守性のために補足として追加した型
+export type FinishReason = 'stop' | 'length' | 'content_filter' | 'tool_calls' | 'error';
 
 // 統一されたLLMレスポンス
 export type GenerateTextResult = {
   text: string;
-  finishReason: 'stop' | 'length' | 'content_filter' | 'tool_calls' | 'error';
+  finishReason: FinishReason;
   toolCalls?: ToolCall[];
   usage?: Usage;
 };
@@ -63,23 +56,32 @@ export type GenerateParams = {
 // 各プロバイダが実装する言語モデルのインタフェース
 export interface LanguageModel {
   doGenerate(params: GenerateParams): Promise<GenerateTextResult>;
-  doStream?(params: GenerateParams): AsyncIterable<StreamChunk>;
+  doStream?(params: GenerateParams): AsyncIterable<StreamChunk>; // Appendix Aで定義
 }
 
 // モデルIDに紐づいた言語モデルを返すプロバイダファクトリ
 export type Provider = (modelId: string) => LanguageModel;
 
-// プロバイダ固有のエラーを公開する統一APIエラー
+// LLM APIエラーの統一型
 export class LLMApiError extends Error {
   constructor(
     public status: number,
     public provider: string,
     public code?: string,
     message?: string,
-    public raw?: unknown,
-    public headers?: Record<string, string>
+    public raw?: unknown
   ) {
     super(message || `LLM API Error: ${provider} returned ${status}`);
     this.name = 'LLMApiError';
   }
+}
+
+// Appendix Aで定義：ストリーミングレスポンスの読み取り時に発行されるチャンク
+export interface StreamChunk {
+  kind: 'delta' | 'event' | 'done';
+  text?: string;
+  finishReason?: FinishReason; // FinishReason型を使用
+  usage?: Usage;
+  toolCalls?: ToolCall[];
+  error?: unknown;
 }

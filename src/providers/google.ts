@@ -1,203 +1,191 @@
+import { GoogleGenAI } from '@google/genai';
 import type {
+    FinishReason,
     GenerateParams,
     GenerateTextResult,
     LanguageModel,
+    Message,
     Provider,
-    ToolCall,
     StreamChunk,
+    ToolCall,
 } from '../types';
 import { LLMApiError } from '../types';
-import { GoogleGenAI, type Content, type Part } from '@google/genai';
 
-export type ProviderConfig = {
-    apiKey?: string;
-};
+export function createGoogle(config?: { apiKey?: string }): Provider {
+    const client = new GoogleGenAI({
+        apiKey: config?.apiKey, // 省略時は環境変数GEMINI_API_KEYを自動参照
+    });
 
-function mapGoogleFinishReason(
-    finishReason: string | null | undefined,
-    hasFunctionCall: boolean
-): GenerateTextResult['finishReason'] {
-    if (hasFunctionCall) {
-        return 'tool_calls';
-    }
-    const normalized = finishReason?.toUpperCase();
-    switch (normalized) {
-        case 'STOP':
-            return 'stop';
-        case 'MAX_TOKENS':
-            return 'length';
-        case 'SAFETY':
-        case 'RECITATION':
-            return 'content_filter';
-        default:
-            return 'stop';
-    }
-}
-
-function convertMessages(messages: GenerateParams['messages']): Content[] {
-    return messages
-        .filter((m) => m.role !== 'system')
-        .map((message) => {
-            if (message.role === 'tool') {
-                return {
-                    role: 'user',
-                    parts: [
-                        {
-                            functionResponse: {
-                                name: message.name,
-                                response: { result: message.content },
+    // メッセージをGoogle形式に変換
+    function convertMessages(messages: Message[]) {
+        return messages
+            .filter((m) => m.role !== 'system')
+            .map((m) => {
+                // ツール結果はuserロール + functionResponse
+                if (m.role === 'tool') {
+                    return {
+                        role: 'user' as const,
+                        parts: [
+                            {
+                                functionResponse: {
+                                    name: m.name,
+                                    response: { result: m.content },
+                                },
                             },
-                        },
-                    ],
-                };
-            }
-
-            if (message.role === 'assistant' && message.toolCalls) {
-                const parts: Part[] = [];
-                if (message.content) {
-                    parts.push({ text: message.content });
+                        ],
+                    };
                 }
-                message.toolCalls.forEach((tc) => {
-                    parts.push({ functionCall: { name: tc.name, args: tc.args } });
-                });
-                return { role: 'model', parts };
-            }
-
-            return {
-                role: message.role === 'assistant' ? 'model' : 'user',
-                parts: [{ text: message.content }],
-            };
-        });
-}
-
-export function createGoogle(config: ProviderConfig = {}): Provider {
-    const apiKey =
-        config.apiKey ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
-
-    if (!apiKey) {
-        throw new Error(
-            'GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is required'
-        );
+                // assistantのツール呼び出し
+                if (m.role === 'assistant' && m.toolCalls) {
+                    const parts: any[] = [];
+                    if (m.content) {
+                        parts.push({ text: m.content });
+                    }
+                    for (const tc of m.toolCalls) {
+                        parts.push({
+                            functionCall: { name: tc.name, args: tc.args },
+                        });
+                    }
+                    return { role: 'model' as const, parts };
+                }
+                // 通常のメッセージ
+                const role = m.role === 'assistant' ? 'model' : 'user';
+                return {
+                    role: role as 'user' | 'model',
+                    parts: [{ text: m.content }],
+                };
+            });
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    // finishReasonマッピング
+    function mapFinishReason(
+        reason: string | undefined,
+        hasFunctionCall: boolean
+    ): FinishReason {
+        if (hasFunctionCall) return 'tool_calls';
+        switch (reason?.toUpperCase()) {
+            case 'STOP':
+                return 'stop';
+            case 'MAX_TOKENS':
+                return 'length';
+            case 'SAFETY':
+                return 'content_filter';
+            default:
+                return 'stop';
+        }
+    }
 
     return (modelId: string): LanguageModel => ({
         async doGenerate(params: GenerateParams): Promise<GenerateTextResult> {
-            const systemMessages = params.messages.filter((m) => m.role === 'system');
-            const messages = params.messages.filter((m) => m.role !== 'system');
+            // systemメッセージを抽出
+            const systemMessages = params.messages.filter(
+                (m) => m.role === 'system'
+            );
+            const systemInstruction = systemMessages
+                .map((m) => m.content)
+                .join('\n');
 
-            const systemInstruction =
-                systemMessages.length > 0
-                    ? { parts: systemMessages.map((m) => ({ text: m.content })) }
-                    : undefined;
-
-            const tools =
-                params.tools && params.tools.length > 0
-                    ? [
-                          {
-                              functionDeclarations: params.tools.map((tool) => ({
-                                  name: tool.name,
-                                  description: tool.description,
-                                  parameters: tool.parameters,
-                              })),
-                          },
-                      ]
-                    : undefined;
+            // ツール定義をGoogle形式に変換
+            const tools = params.tools?.length
+                ? [
+                      {
+                          functionDeclarations: params.tools.map((tool) => ({
+                              name: tool.name,
+                              description: tool.description,
+                              parameters: tool.parameters,
+                          })),
+                      },
+                  ]
+                : undefined;
 
             try {
-                const response = await ai.models.generateContent({
+                const response = await client.models.generateContent({
                     model: modelId,
-                    contents: convertMessages(messages),
-                    ...(systemInstruction && { systemInstruction }),
-                    ...(tools && { tools }),
+                    contents: convertMessages(params.messages),
                     config: {
+                        systemInstruction,
                         temperature: params.temperature,
                         maxOutputTokens: params.maxTokens,
+                        ...(tools && { tools }),
                     },
                 });
 
                 const candidate = response.candidates?.[0];
-                if (!candidate?.content?.parts) {
-                    return {
-                        text: '',
-                        finishReason: 'content_filter',
-                        usage: {
-                            promptTokens: response.usageMetadata?.promptTokenCount,
-                        },
-                    };
-                }
+                const parts = candidate?.content?.parts ?? [];
 
-                const parts = candidate.content.parts;
+                // partsからテキストとfunctionCallを抽出
                 const textParts = parts.filter((p: any) => p.text);
                 const text = textParts.map((p: any) => p.text).join('');
-                const functionCallParts = parts.filter(
-                    (p: any) => p.functionCall !== undefined
-                );
 
+                const functionCallParts = parts.filter(
+                    (p: any) => p.functionCall
+                );
                 const toolCalls: ToolCall[] | undefined =
                     functionCallParts.length > 0
-                        ? functionCallParts.map((p: any, index: number) => ({
-                              toolCallId: `call_${index}`,
+                        ? functionCallParts.map((p: any, i: number) => ({
+                              toolCallId: `call_${i}`, // Gemini APIはIDを返さないため生成
                               name: p.functionCall.name,
+                              // 引数なしの関数呼び出し時に args が null/undefined となる場合があるため
+                              // 配布コードでは書籍のスニペットから ?? {} を追加している
                               args: p.functionCall.args ?? {},
                           }))
                         : undefined;
 
                 return {
                     text,
-                    finishReason: mapGoogleFinishReason(
-                        candidate.finishReason,
-                        !!toolCalls?.length
+                    finishReason: mapFinishReason(
+                        candidate?.finishReason,
+                        functionCallParts.length > 0
                     ),
+                    toolCalls,
                     usage: {
                         promptTokens: response.usageMetadata?.promptTokenCount,
                         completionTokens:
                             response.usageMetadata?.candidatesTokenCount,
+                        totalTokens: response.usageMetadata?.totalTokenCount,
                     },
-                    toolCalls,
                 };
-            } catch (error) {
+            } catch (error: any) {
                 throw new LLMApiError(
-                    500,
+                    error.status ?? 500,
                     'google',
-                    undefined,
-                    error instanceof Error ? error.message : String(error),
+                    error.code,
+                    error.message,
                     error
                 );
             }
         },
 
-        async *doStream(params: GenerateParams) {
-            const systemMessages = params.messages.filter((m) => m.role === 'system');
+        // Appendix Aで実装
+        async *doStream(params: GenerateParams): AsyncIterable<StreamChunk> {
+            const systemMessages = params.messages.filter(
+                (m) => m.role === 'system'
+            );
+            const systemInstruction = systemMessages
+                .map((m) => m.content)
+                .join('\n');
 
-            const systemInstruction =
-                systemMessages.length > 0
-                    ? { parts: systemMessages.map((m) => ({ text: m.content })) }
-                    : undefined;
-
-            const tools =
-                params.tools && params.tools.length > 0
-                    ? [
-                          {
-                              functionDeclarations: params.tools.map((tool) => ({
-                                  name: tool.name,
-                                  description: tool.description,
-                                  parameters: tool.parameters,
-                              })),
-                          },
-                      ]
-                    : undefined;
+            const tools = params.tools?.length
+                ? [
+                      {
+                          functionDeclarations: params.tools.map((tool) => ({
+                              name: tool.name,
+                              description: tool.description,
+                              parameters: tool.parameters,
+                          })),
+                      },
+                  ]
+                : undefined;
 
             try {
-                const stream = await ai.models.generateContentStream({
+                const stream = await client.models.generateContentStream({
                     model: modelId,
                     contents: convertMessages(params.messages),
-                    ...(systemInstruction && { systemInstruction }),
-                    ...(tools && { tools }),
                     config: {
+                        systemInstruction,
                         temperature: params.temperature,
                         maxOutputTokens: params.maxTokens,
+                        ...(tools && { tools }),
                     },
                 });
 
@@ -216,17 +204,21 @@ export function createGoogle(config: ProviderConfig = {}): Provider {
                         }
 
                         if (part.functionCall) {
+                            // 書籍付録Aのスニペットでは関数名をそのままIDとして使用しているが、
+                            // 同一関数の複数回呼び出し時に後の呼び出しが前を上書きしてしまう問題があるため、
+                            // 配布コードでは doGenerate と同様に連番式 ID（call_0, call_1, ...）を使用する。
                             const id = `call_${toolCallIndex++}`;
                             toolCalls[id] = {
                                 toolCallId: id,
                                 name: part.functionCall.name,
-                                args: part.functionCall.args || {},
+                                // args が null/undefined の場合に備えて ?? {} を適用
+                                args: part.functionCall.args ?? {},
                             };
                         }
                     }
 
                     if (candidate?.finishReason) {
-                        finishReason = mapGoogleFinishReason(
+                        finishReason = mapFinishReason(
                             candidate.finishReason,
                             Object.keys(toolCalls).length > 0
                         );
@@ -252,12 +244,12 @@ export function createGoogle(config: ProviderConfig = {}): Provider {
                     usage,
                     toolCalls: toolCallList.length > 0 ? toolCallList : undefined,
                 };
-            } catch (error) {
+            } catch (error: any) {
                 throw new LLMApiError(
-                    500,
+                    error.status ?? 500,
                     'google',
-                    undefined,
-                    error instanceof Error ? error.message : String(error),
+                    error.code,
+                    error.message,
                     error
                 );
             }

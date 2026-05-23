@@ -1,216 +1,179 @@
+import Anthropic from '@anthropic-ai/sdk';
 import type {
+    FinishReason,
     GenerateParams,
     GenerateTextResult,
     LanguageModel,
+    Message,
     Provider,
-    ToolCall,
     StreamChunk,
+    ToolCall,
 } from '../types';
 import { LLMApiError } from '../types';
-import Anthropic from '@anthropic-ai/sdk';
 
-export type ProviderConfig = {
+export function createAnthropic(config?: {
     apiKey?: string;
-    baseURL?: string;
     maxRetries?: number;
-};
-
-function mapAnthropicFinishReason(
-    stopReason: string | null | undefined
-): GenerateTextResult['finishReason'] {
-    switch (stopReason) {
-        case 'end_turn':
-        case 'stop_sequence':
-            return 'stop';
-        case 'max_tokens':
-            return 'length';
-        case 'tool_use':
-            return 'tool_calls';
-        default:
-            return 'stop';
-	}
-}
-
-type NonSystemMessage = Exclude<
-    GenerateParams['messages'][number],
-    { role: 'system' }
->;
-
-function mapMessages(messages: NonSystemMessage[]): Anthropic.MessageParam[] {
-    return messages.map((message): Anthropic.MessageParam => {
-        if (message.role === 'assistant') {
-            const content: Anthropic.ContentBlockParam[] = [];
-            if (message.content) {
-                content.push({ type: 'text', text: message.content });
-            }
-            if (message.toolCalls) {
-                for (const tc of message.toolCalls) {
-                    content.push({
-                        type: 'tool_use',
-                        id: tc.toolCallId,
-                        name: tc.name,
-                        input: tc.args,
-                    });
-                }
-            }
-            return { role: 'assistant', content };
-        }
-
-        if (message.role === 'tool') {
-            return {
-                role: 'user',
-                content: [
-                    {
-                        type: 'tool_result',
-                        tool_use_id: message.toolCallId,
-                        content: message.content,
-                    },
-                ],
-            };
-        }
-
-        return { role: 'user', content: message.content };
+}): Provider {
+    const client = new Anthropic({
+        apiKey: config?.apiKey, // 省略時は環境変数ANTHROPIC_API_KEYを自動参照
+        maxRetries: config?.maxRetries ?? 0,
     });
-}
 
-export function createAnthropic(config: ProviderConfig = {}): Provider {
-    const apiKey = config.apiKey ?? process.env.ANTHROPIC_API_KEY;
-    const baseURL = (config.baseURL ?? 'https://api.anthropic.com').replace(
-        /\/v1\/?$/,
-        ''
-    );
-
-    if (!apiKey) {
-        throw new Error('ANTHROPIC_API_KEY 環境変数が設定されていません');
+    // systemメッセージを分離して変換
+    function convertMessages(messages: Message[]) {
+        return messages
+            .filter((m) => m.role !== 'system')
+            .map((m) => {
+                // ツール結果はuserロール + tool_resultブロック
+                if (m.role === 'tool') {
+                    return {
+                        role: 'user' as const,
+                        content: [
+                            {
+                                type: 'tool_result' as const,
+                                tool_use_id: m.toolCallId,
+                                content: m.content,
+                            },
+                        ],
+                    };
+                }
+                // assistantのツール呼び出し
+                if (m.role === 'assistant' && m.toolCalls) {
+                    const content: any[] = [];
+                    if (m.content) {
+                        content.push({ type: 'text', text: m.content });
+                    }
+                    for (const tc of m.toolCalls) {
+                        content.push({
+                            type: 'tool_use',
+                            id: tc.toolCallId,
+                            name: tc.name,
+                            input: tc.args,
+                        });
+                    }
+                    return { role: 'assistant' as const, content };
+                }
+                return {
+                    role: m.role as 'user' | 'assistant',
+                    content: m.content,
+                };
+            });
     }
 
-    const client = new Anthropic({
-        apiKey,
-        baseURL,
-        maxRetries: config.maxRetries ?? 0,
-    });
+    // finishReasonマッピング
+    function mapFinishReason(
+        stopReason: string | null
+    ): FinishReason {
+        switch (stopReason) {
+            case 'end_turn':
+                return 'stop';
+            case 'tool_use':
+                return 'tool_calls';
+            case 'max_tokens':
+                return 'length';
+            default:
+                return 'stop';
+        }
+    }
 
-	return (modelId: string): LanguageModel => ({
-	        async doGenerate(params: GenerateParams): Promise<GenerateTextResult> {
-	            const systemMessages = params.messages.filter((m) => m.role === 'system');
-	            const messages = params.messages.filter(
-	                (m): m is NonSystemMessage => m.role !== 'system'
-	            );
-	            const maxTokens = params.maxTokens ?? 1024;
-	            const system =
-	                systemMessages.length > 0
-	                    ? systemMessages.map((m) => ({
-	                          type: 'text' as const,
-	                          text: m.content,
-	                      }))
-	                    : undefined;
+    return (modelId: string): LanguageModel => ({
+        async doGenerate(params: GenerateParams): Promise<GenerateTextResult> {
+            // systemメッセージを分離
+            const systemMessages = params.messages.filter(
+                (m) => m.role === 'system'
+            );
+            const system = systemMessages.map((m) => ({
+                type: 'text' as const,
+                text: m.content,
+            }));
 
-	            const tools =
-	                params.tools && params.tools.length > 0
-	                    ? params.tools.map((tool) => ({
-	                          name: tool.name,
-	                          description: tool.description,
-	                          input_schema:
-	                              tool.parameters as Anthropic.Tool.InputSchema,
-	                      }))
-	                    : undefined;
+            // ツール定義をAnthropic形式に変換
+            const tools = params.tools?.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.parameters as Anthropic.Tool.InputSchema,
+            }));
 
-	            try {
-	                const response = await client.messages.create(
-	                    {
-	                        model: modelId,
-                        max_tokens: maxTokens,
-                        ...(system && { system }),
-                        messages: mapMessages(messages),
+            try {
+                const response = await client.messages.create(
+                    {
+                        model: modelId,
+                        system,
+                        messages: convertMessages(params.messages) as Anthropic.MessageParam[],
+                        max_tokens: params.maxTokens ?? 4096,
                         temperature: params.temperature,
-                        ...(tools && { tools }),
+                        ...(tools && tools.length > 0 && { tools }),
                     },
                     { signal: params.signal }
                 );
 
+                // レスポンスからテキストとツール呼び出しを抽出
                 const textBlocks = response.content.filter(
-                    (block: any) => block.type === 'text'
+                    (b) => b.type === 'text'
                 );
-                const text = textBlocks.map((block: any) => block.text).join('');
+                const text = textBlocks.map((b: any) => b.text).join('');
 
                 const toolUseBlocks = response.content.filter(
-                    (block: any) => block.type === 'tool_use'
+                    (b) => b.type === 'tool_use'
                 );
-
-	                const toolCalls: ToolCall[] | undefined =
-	                    toolUseBlocks.length > 0
-	                        ? toolUseBlocks.map((block: any) => ({
-	                              toolCallId: block.id,
-	                              name: block.name,
-	                              args: block.input,
-	                          }))
-	                        : undefined;
-
-	                const promptTokens =
-	                    response.usage?.input_tokens ?? undefined;
-	                const completionTokens =
-	                    response.usage?.output_tokens ?? undefined;
-
-	                return {
-	                    text,
-	                    finishReason: mapAnthropicFinishReason(response.stop_reason),
-	                    usage: response.usage
-	                        ? {
-	                              promptTokens,
-	                              completionTokens,
-	                              totalTokens:
-	                                  (promptTokens ?? 0) +
-	                                  (completionTokens ?? 0),
-	                          }
-	                        : undefined,
-	                    toolCalls,
-	                };
-	            } catch (error) {
-                if (error instanceof Anthropic.APIError) {
-                    const headers = error.headers
-                        ? Object.fromEntries(error.headers.entries())
+                const toolCalls: ToolCall[] | undefined =
+                    toolUseBlocks.length > 0
+                        ? toolUseBlocks.map((b: any) => ({
+                              toolCallId: b.id,
+                              name: b.name,
+                              args: b.input,
+                          }))
                         : undefined;
+
+                return {
+                    text,
+                    finishReason: mapFinishReason(response.stop_reason),
+                    toolCalls,
+                    usage: {
+                        promptTokens: response.usage.input_tokens,
+                        completionTokens: response.usage.output_tokens,
+                        totalTokens:
+                            response.usage.input_tokens +
+                            response.usage.output_tokens,
+                    },
+                };
+            } catch (error) {
+                if (error instanceof Anthropic.APIError) {
                     throw new LLMApiError(
                         error.status ?? 500,
                         'anthropic',
-                        undefined,
+                        (error.error as any)?.type,
                         error.message,
-                        error.error,
-                        headers
+                        error
                     );
                 }
                 throw error;
             }
-	        },
-	        async *doStream(params: GenerateParams) {
-	            const systemMessages = params.messages.filter((m) => m.role === 'system');
-	            const messages = params.messages.filter(
-	                (m): m is NonSystemMessage => m.role !== 'system'
-	            );
-	            const system =
-	                systemMessages.length > 0
-	                    ? systemMessages.map((m) => ({
-	                          type: 'text' as const,
-	                          text: m.content,
-	                      }))
-	                    : undefined;
+        },
+        // Appendix Aで実装
+        async *doStream(params: GenerateParams): AsyncIterable<StreamChunk> {
+            const systemMessages = params.messages.filter(
+                (m) => m.role === 'system'
+            );
+            const system = systemMessages.map((m) => ({
+                type: 'text' as const,
+                text: m.content,
+            }));
 
-            const tools =
-                params.tools && params.tools.length > 0
-                    ? params.tools.map((tool) => ({
-                          name: tool.name,
-                          description: tool.description,
-                          input_schema: tool.parameters as Anthropic.Tool.InputSchema,
-                      }))
-                    : undefined;
+            const tools = params.tools?.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.parameters as Anthropic.Tool.InputSchema,
+            }));
 
             try {
                 const stream = await client.messages.create(
                     {
                         model: modelId,
                         max_tokens: params.maxTokens ?? 4096,
-                        ...(system && { system }),
-                        messages: mapMessages(messages),
+                        system,
+                        messages: convertMessages(params.messages) as Anthropic.MessageParam[],
                         temperature: params.temperature,
                         stream: true,
                         ...(tools && tools.length > 0 && { tools }),
@@ -247,7 +210,9 @@ export function createAnthropic(config: ProviderConfig = {}): Provider {
                                 const id = indexToId[event.index];
                                 const toolCall = id ? toolCalls[id] : undefined;
                                 if (id && toolCall) {
-                                    const buffer = (partialJsonBuffers[id] ?? '') + event.delta.partial_json;
+                                    const buffer =
+                                        (partialJsonBuffers[id] ?? '') +
+                                        event.delta.partial_json;
                                     partialJsonBuffers[id] = buffer;
                                     try {
                                         toolCall.args = JSON.parse(buffer);
@@ -258,24 +223,24 @@ export function createAnthropic(config: ProviderConfig = {}): Provider {
                             }
                             break;
 
-	                        case 'message_delta': {
-	                            if (event.delta?.stop_reason) {
-	                                finishReason = mapAnthropicFinishReason(
-	                                    event.delta.stop_reason
-	                                );
-	                            }
-	                            if (event.usage) {
-	                                usage = {
-	                                    promptTokens:
-	                                        event.usage.input_tokens ?? undefined,
-	                                    completionTokens: event.usage.output_tokens,
-	                                    totalTokens:
-	                                        (event.usage.input_tokens || 0) +
-	                                        (event.usage.output_tokens || 0),
-	                                };
-	                            }
-	                            break;
-	                        }
+                        case 'message_delta': {
+                            if (event.delta?.stop_reason) {
+                                finishReason = mapFinishReason(
+                                    event.delta.stop_reason
+                                );
+                            }
+                            if (event.usage) {
+                                usage = {
+                                    promptTokens:
+                                        event.usage.input_tokens ?? undefined,
+                                    completionTokens: event.usage.output_tokens,
+                                    totalTokens:
+                                        (event.usage.input_tokens || 0) +
+                                        (event.usage.output_tokens || 0),
+                                };
+                            }
+                            break;
+                        }
 
                         case 'message_stop': {
                             const toolCallList = Object.values(toolCalls);
@@ -296,16 +261,12 @@ export function createAnthropic(config: ProviderConfig = {}): Provider {
                 }
             } catch (error) {
                 if (error instanceof Anthropic.APIError) {
-                    const headers = error.headers
-                        ? Object.fromEntries(error.headers.entries())
-                        : undefined;
                     throw new LLMApiError(
                         error.status ?? 500,
                         'anthropic',
-                        undefined,
+                        (error.error as any)?.type,
                         error.message,
-                        error.error,
-                        headers
+                        error
                     );
                 }
                 throw error;

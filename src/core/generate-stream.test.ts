@@ -19,7 +19,7 @@ describe('generateStreamText', () => {
             for await (const _ of iter) {
                 // no-op
             }
-        }).toThrow('Model does not support streaming');
+        }).toThrow('このモデルはストリーミングに対応していません');
     });
 });
 
