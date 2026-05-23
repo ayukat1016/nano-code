@@ -131,10 +131,10 @@ export function createOpenAI(config?: {
                     toolCalls,
                     usage: completion.usage
                         ? {
-                              promptTokens: completion.usage.prompt_tokens,
-                              completionTokens: completion.usage.completion_tokens,
-                              totalTokens: completion.usage.total_tokens,
-                          }
+                                promptTokens: completion.usage.prompt_tokens,
+                                completionTokens: completion.usage.completion_tokens,
+                                totalTokens: completion.usage.total_tokens,
+                            }
                         : undefined,
                 };
             } catch (error) {
@@ -251,3 +251,69 @@ export function createOpenAI(config?: {
         },
     });
 }
+
+/*
+// ==========================================
+// 実用上のAPI不整合エラー（400）対策の変更例
+// ==========================================
+// 第6章「6.5 manageContextメソッドの実装」で導入される履歴圧縮（会話履歴の自動削減）によって
+// 過去のメッセージがスライス・削減された際、ツール呼び出し（tool_calls）と実行結果（tool）の
+// 親子関係（対となるペア）が壊れることで、OpenAI API が 400 Bad Request エラーを返すようになる実用上の問題があります。
+// 
+// これを防ぐため、convertMessages を以下のように書き換え、クリーンアップ関数（cleanMessages）を適用してください。
+
+// 変更例 (convertMessages 内で cleanMessages を適用する):
+//
+//  function convertMessages(messages: Message[]) {
+// -    return messages.map((m) => {
+// +    const cleaned = cleanMessages(messages);
+// +    return cleaned.map((m) => {
+//          // (中身は変更なし)
+//      });
+//  }
+
+function cleanMessages(messages: Message[]): Message[] {
+    const existingToolCallIds = new Set(
+        messages
+            .filter(m => m.role === 'tool')
+            .map(m => (m as any).toolCallId)
+    );
+
+    const finalMessages: Message[] = [];
+    for (const msg of messages) {
+        if (msg.role === 'tool') {
+            let foundAssistant = false;
+            for (let j = finalMessages.length - 1; j >= 0; j--) {
+                const prev = finalMessages[j];
+                if (prev && prev.role === 'assistant' && 'toolCalls' in prev && prev.toolCalls) {
+                    if (prev.toolCalls.some((tc: any) => tc.toolCallId === msg.toolCallId)) {
+                        foundAssistant = true;
+                        break;
+                    }
+                }
+            }
+            if (foundAssistant) {
+                finalMessages.push(msg);
+            }
+        } else if (msg.role === 'assistant' && 'toolCalls' in msg && msg.toolCalls) {
+            const validToolCalls = msg.toolCalls.filter((tc: any) => existingToolCallIds.has(tc.toolCallId));
+            if (validToolCalls.length > 0) {
+                finalMessages.push({
+                    role: 'assistant',
+                    content: msg.content,
+                    toolCalls: validToolCalls
+                } as Message);
+            } else {
+                finalMessages.push({
+                    role: 'assistant',
+                    content: msg.content
+                } as Message);
+            }
+        } else {
+            finalMessages.push(msg);
+        }
+    }
+    return finalMessages;
+}
+*/
+

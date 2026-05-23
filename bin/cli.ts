@@ -159,7 +159,7 @@ ${issueText}
             createIssueComment,
         },
         maxSteps: 30,
-        useStreaming: streamMode,
+        useStreaming: streamMode, // 付録A（ストリーミング機能）用フラグ
         // Yoloモードなら自動承認
         approvalFunc: yoloMode ? async (name) => {
             console.log(`[自動承認] ツール ${name} の実行を承認しました`);
@@ -173,9 +173,6 @@ ${issueText}
         if (isCI) {
              console.log('\n' + '─'.repeat(60));
              console.log(`[完了] 正常終了`);
-             if (result.usage) {
-                 console.log(`[使用トークン] ${result.usage.totalTokens} tokens`);
-             }
         }
     } catch (error) {
         console.error('\n' + '─'.repeat(60));
