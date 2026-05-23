@@ -262,6 +262,8 @@
             </ul>
             <h3>第 4 章</h3>
             <ul>
+              <li><a href="#ch04-5-execcommand-security-extensions">4.5 節 execCommand の実用上のセキュリティ対策と機能拡張</a></li>
+              <li><a href="#ch04-6-tools-individual-exports">4.6 節 index.ts におけるツールの個別エクスポート</a></li>
               <li><a href="#ch04-6-tools-demo-filename">4.6 節 ツール動作確認スクリプトのファイル名</a></li>
             </ul>
             <h3>第 6 章</h3>
@@ -374,6 +376,86 @@ GOOGLE_API_KEY=AI...</code></pre>
 
           <section class="chapter-group">
             <h2>第 4 章</h2>
+
+            <article id="ch04-5-execcommand-security-extensions">
+              <header>
+                <span class="chapter-label">4.5 節</span>
+                <h3>execCommand の実用上のセキュリティ対策と機能拡張</h3>
+                <a class="anchor" href="#ch04-5-execcommand-security-extensions">#</a>
+              </header>
+              <dl>
+                <dt>概要</dt>
+                <dd>
+                  <p>配布リポジトリの <code>src/tools/execCommand.ts</code> は、本書に記載されたシンプルな実装と比較して、実用的な堅牢化（セキュリティ対策およびバグ防止）を施したコードになっています。</p>
+                </dd>
+                <dt>主な差異と追加意図</dt>
+                <dd>
+                  <ul>
+                    <li><strong>コマンド失敗時（<code>code !== 0</code>）の例外スロー：</strong><br>
+                      書籍では終了コードを文字列に含めて正常終了（<code>resolve</code>）させていますが、配布コードでは <code>reject(new Error)</code> により例外を投げるように変更しています。例外を投げない場合、エージェント側がコマンド失敗を認識できず、テストが落ちても「成功した」と思い込んで次のステップへ進むといった致命的なバグを防止するためです。
+                    </li>
+                    <li><strong><code>dangerousPatterns</code> 正規表現による危険パターン検知：</strong><br>
+                      書籍のホワイトリストチェックに加え、引数に <code>rm -rf</code> や <code>curl | sh</code> などの危険なパターンが渡された場合に水際でエラーを投げるセキュリティ防御層を追加しています。
+                    </li>
+                    <li><strong>引数オブジェクト（<code>commandName</code> / <code>commandArgs</code>）のサポート：</strong><br>
+                      Google (Gemini) や Anthropic のツール呼び出し時に、LLMが引数を文字列ではなくオブジェクトで返してくるケースがあるため、これらを安全に処理するための拡張です。
+                    </li>
+                    <li><strong>厳格なパス検証：</strong><br>
+                      引数内に含まれるパス指定が <code>/</code> や <code>.</code> で始まる場合のトラバーサル検知漏れを防ぐため、検証のロジックが強化されています。
+                    </li>
+                    <li><strong>許可コマンド（<code>ALLOWED_COMMANDS</code>）の追加：</strong><br>
+                      本書では <code>['bun', 'ls', 'git', 'gh']</code> のみが指定されていますが、第5章以降でエージェントが自律的にファイルの検索や閲覧（<code>grep</code>, <code>cat</code>, <code>find</code> 等）およびディレクトリ作成（<code>mkdir</code> 等）を行えるようにするため、あらかじめ許可される基本コマンドが追加されています。
+                    </li>
+                  </ul>
+                </dd>
+                <dt>実務におけるセキュリティ考慮事項と設計上の制限</dt>
+                <dd>
+                  <p>本書で解説しているツールのパス検証やコマンド制限は、コードをシンプルに保つために最小限のチェックにとどめています。実務において、サンドボックスなどの隔離環境を使用せずにツールを実行する場合、以下の設計制限（セキュリティ考慮事項）に留意し、必要に応じて強化策を実装してください。</p>
+                  <ul>
+                    <li><strong>シンボリックリンク経由のトラバーサル（writeFile / editFile）：</strong><br>
+                      文字列としてのプレフィックス比較（<code>startsWith</code>）だけでは、ワークスペース内にあらかじめ作成された、外部のファイルを指すシンボリックリンクを経由したファイルの上書きや閲覧（トラバーサル）を防げません。<br>
+                      実務でこの問題を回避するには、ファイルの操作前に <code>fs.realpath</code> を用いて実体パスを解決したうえで、その絶対パスがワークスペース内にあるかを検証する必要があります。
+                      <pre><code>// 対策コード例
+const realPath = await fs.realpath(absolutePath);
+if (!realPath.startsWith(allowedPrefix) &amp;&amp; realPath !== WORKSPACE_ROOT) {
+  throw new Error("アクセス拒否");
+}</code></pre>
+                    </li>
+                    <li><strong>コマンドオプションによる制限のすり抜け（execCommand）：</strong><br>
+                      <code>ALLOWED_COMMANDS</code> で <code>git</code> や <code>find</code> などの汎用的なコマンドの実行を許可している場合、<code>git --git-dir=../...</code> などのパス指定オプションや、<code>find -exec ...</code> などの別プロセス実行引数を利用されることで、単純なプレフィックスチェックや <code>dangerousPatterns</code> による正規表現検知をすり抜けて、ワークスペース外への干渉や任意コマンドの実行が行えてしまいます。<br>
+                      実務でサンドボックスを利用せずにコマンド実行ツールを使用する場合は、単にコマンド名を許可するだけでなく、実行可能なサブコマンド（例：<code>git commit</code> のみ）やオプションをホワイトリスト形式で厳密に絞り込むような追加の引数バリデーションが必要です。
+                    </li>
+                  </ul>
+                </dd>
+              </dl>
+            </article>
+
+            <article id="ch04-6-tools-individual-exports">
+              <header>
+                <span class="chapter-label">4.6 節</span>
+                <h3>index.ts におけるツールの個別エクスポート</h3>
+                <a class="anchor" href="#ch04-6-tools-individual-exports">#</a>
+              </header>
+              <dl>
+                <dt>概要</dt>
+                <dd>
+                  <p>配布リポジトリの <code>src/tools/index.ts</code> では、書籍の <code>allTools</code> 配列のエクスポートに加え、各ツールオブジェクト（<code>readFile</code>, <code>writeFile</code>, <code>editFile</code>, <code>execCommand</code>）が個別に再エクスポート（<code>export { ... }</code>）されています。</p>
+                </dd>
+                <dt>症状</dt>
+                <dd>
+                  <p>書籍のコード記述（<code>allTools</code> 配列のみをエクスポートする形）のまま、第 5 章以降の CLI 実行用スクリプト（<code>bin/cli.ts</code>）や他章のデモコードを動かそうとすると、特定のツールオブジェクトを直接個別にインポートしている箇所で次のような TypeScript のコンパイルエラーが発生します。</p>
+                  <pre><code>Module '"../src/tools"' declares 'readFile' locally, but it is not exported.</code></pre>
+                </dd>
+                <dt>対処</dt>
+                <dd>
+                  <p><code>src/tools/index.ts</code> の末尾に以下のエクスポート文を追記して、各ツールオブジェクトを個別に再エクスポートしてください。</p>
+                  <pre><code>export { readFile } from './readFile';
+export { writeFile } from './writeFile';
+export { editFile } from './editFile';
+export { execCommand } from './execCommand';</code></pre>
+                </dd>
+              </dl>
+            </article>
 
             <article id="ch04-6-tools-demo-filename">
               <header>
