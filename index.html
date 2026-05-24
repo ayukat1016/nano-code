@@ -266,9 +266,14 @@
               <li><a href="#ch04-6-tools-individual-exports">4.6 節 index.ts におけるツールの個別エクスポート</a></li>
               <li><a href="#ch04-6-tools-demo-filename">4.6 節 ツール動作確認スクリプトのファイル名</a></li>
             </ul>
+            <h3>第 5 章</h3>
+            <ul>
+              <li><a href="#ch05-8-agent-implementation">5.8 節 Agent クラスの実用上の差異（コンテキスト管理、ストリーミング、終了制御）</a></li>
+            </ul>
             <h3>第 6 章</h3>
             <ul>
               <li><a href="#ch06-4-create-model-from-env">6.4 節 createModelFromEnv の実装差異</a></li>
+              <li><a href="#ch06-5-manage-context-api-error">6.5 節 履歴圧縮時の API 不整合エラー（400）の回避</a></li>
             </ul>
             <h3>第 7 章</h3>
             <ul>
@@ -313,10 +318,10 @@ GOOGLE_API_KEY=AI...</code></pre>
       </dd>
       <dt>対処</dt>
       <dd>
-        <p>配布リポジトリの <code>.env.example</code> では <code>GEMINI_API_KEY</code> と <code>GOOGLE_API_KEY</code> の両方を併記しています。Google のキーを設定する際は、書籍 3 章の実装に合わせて <code>GEMINI_API_KEY</code> を使用してください（同じ値を両方の変数に書いておくと、本書 2 章のサンプル（<code>GOOGLE_API_KEY</code>）にも 6 章の <code>createModelFromEnv</code> にも対応できます）。</p>
+        <p>サンプルコードの <code>.env.example</code> では <code>GEMINI_API_KEY</code> と <code>GOOGLE_API_KEY</code> の両方を併記しています。Google のキーを設定する際は、書籍 3 章の実装に合わせて <code>GEMINI_API_KEY</code> を使用してください（同じ値を両方の変数に書いておくと、本書 2 章のサンプル（<code>GOOGLE_API_KEY</code>）にも 6 章の <code>createModelFromEnv</code> にも対応できます）。</p>
         <pre><code>GEMINI_API_KEY=AI...
 GOOGLE_API_KEY=AI...</code></pre>
-        <p>なお、配布リポジトリの旧版（<code>next-edition</code> ブランチ）には両方の環境変数を読むフォールバックが実装されていましたが、本書 3 章の記述と一致させるため、<code>main</code> では撤去しています。</p>
+        <p>なお、サンプルコードの旧版（<code>next-edition</code> ブランチ）には両方の環境変数を読むフォールバックが実装されていましたが、本書 3 章の記述と一致させるため、<code>main</code> では撤去しています。</p>
       </dd>
     </dl>
   </article>
@@ -338,11 +343,11 @@ GOOGLE_API_KEY=AI...</code></pre>
                 </dd>
                 <dt>症状</dt>
                 <dd>
-                  <p>配布コードや付録 A のストリーミング実装（<code>StreamChunk</code>）等では、この終了理由の型を <code>FinishReason</code> として参照していますが、書籍の記述通りに写経していると <code>FinishReason</code> 型が存在しないためコンパイルエラー（<code>Cannot find name 'FinishReason'</code>）が発生します。</p>
+                  <p>サンプルコードや付録 A のストリーミング実装（<code>StreamChunk</code>）等では、この終了理由の型を <code>FinishReason</code> として参照していますが、書籍の記述通りに写経していると <code>FinishReason</code> 型が存在しないためコンパイルエラー（<code>Cannot find name 'FinishReason'</code>）が発生します。</p>
                 </dd>
                 <dt>対処</dt>
                 <dd>
-                  <p>配布リポジトリでは、各プロバイダーと型定義での重複を避け、整合性を保つために <code>src/types.ts</code> で次のように型エイリアスを定義しています。</p>
+                  <p>サンプルコードでは、各プロバイダーと型定義での重複を避け、整合性を保つために <code>src/types.ts</code> で次のように型エイリアスを定義しています。</p>
                   <pre><code>export type FinishReason = 'stop' | 'length' | 'content_filter' | 'tool_calls' | 'error';</code></pre>
                   <p>書籍のコードを写経して進める場合は、<code>src/types.ts</code> にこの型エイリアスを追加して定義するか、各プロバイダー内の <code>FinishReason</code> の箇所を <code>'stop' | 'length' | ...</code> または <code>GenerateTextResult['finishReason']</code> に置き換えてください。</p>
                 </dd>
@@ -386,13 +391,13 @@ GOOGLE_API_KEY=AI...</code></pre>
               <dl>
                 <dt>概要</dt>
                 <dd>
-                  <p>配布リポジトリの <code>src/tools/execCommand.ts</code> は、本書に記載されたシンプルな実装と比較して、実用的な堅牢化（セキュリティ対策およびバグ防止）を施したコードになっています。</p>
+                  <p>サンプルコードの <code>src/tools/execCommand.ts</code> は、本書に記載されたシンプルな実装と比較して、実用的な堅牢化（セキュリティ対策およびバグ防止）を施したコードになっています。</p>
                 </dd>
                 <dt>主な差異と追加意図</dt>
                 <dd>
                   <ul>
                     <li><strong>コマンド失敗時（<code>code !== 0</code>）の例外スロー：</strong><br>
-                      書籍では終了コードを文字列に含めて正常終了（<code>resolve</code>）させていますが、配布コードでは <code>reject(new Error)</code> により例外を投げるように変更しています。例外を投げない場合、エージェント側がコマンド失敗を認識できず、テストが落ちても「成功した」と思い込んで次のステップへ進むといった致命的なバグを防止するためです。
+                      書籍では終了コードを文字列に含めて正常終了（<code>resolve</code>）させていますが、サンプルコードでは <code>reject(new Error)</code> により例外を投げるように変更しています。例外を投げない場合、エージェント側がコマンド失敗を認識できず、テストが落ちても「成功した」と思い込んで次のステップへ進むといった致命的なバグを防止するためです。
                     </li>
                     <li><strong><code>dangerousPatterns</code> 正規表現による危険パターン検知：</strong><br>
                       書籍のホワイトリストチェックに加え、引数に <code>rm -rf</code> や <code>curl | sh</code> などの危険なパターンが渡された場合に水際でエラーを投げるセキュリティ防御層を追加しています。
@@ -439,11 +444,11 @@ if (!realPath.startsWith(allowedPrefix) &amp;&amp; realPath !== WORKSPACE_ROOT) 
               <dl>
                 <dt>概要</dt>
                 <dd>
-                  <p>配布リポジトリの <code>src/tools/index.ts</code> では、書籍の <code>allTools</code> 配列のエクスポートに加え、各ツールオブジェクト（<code>readFile</code>, <code>writeFile</code>, <code>editFile</code>, <code>execCommand</code>）が個別に再エクスポート（<code>export { ... }</code>）されています。</p>
+                  <p>サンプルコードの <code>src/tools/index.ts</code> では、書籍の <code>allTools</code> 配列のエクスポートに加え、各ツールオブジェクト（<code>readFile</code>, <code>writeFile</code>, <code>editFile</code>, <code>execCommand</code>）が個別に再エクスポート（<code>export { ... }</code>）されています。</p>
                 </dd>
                 <dt>症状</dt>
                 <dd>
-                  <p>書籍のコード記述（<code>allTools</code> 配列のみをエクスポートする形）のまま、第 5 章以降の CLI 実行用スクリプト（<code>bin/cli.ts</code>）や他章のデモコードを動かそうとすると、特定のツールオブジェクトを直接個別にインポートしている箇所で次のような TypeScript のコンパイルエラーが発生します。</p>
+                  <p>書籍のコード記述（<code>allTools</code> 配列のみをエクスポートする形）のまま、第 6 章以降の CLI 実行用スクリプト（<code>bin/cli.ts</code>）や他章のデモコードを動かそうとすると、特定のツールオブジェクトを直接個別にインポートしている箇所で次のような TypeScript のコンパイルエラーが発生します。</p>
                   <pre><code>Module '"../src/tools"' declares 'readFile' locally, but it is not exported.</code></pre>
                 </dd>
                 <dt>対処</dt>
@@ -482,12 +487,67 @@ export { execCommand } from './execCommand';</code></pre>
           </section>
 
           <section class="chapter-group">
+            <h2>第 5 章</h2>
+
+            <article id="ch05-8-agent-implementation">
+              <header>
+                <span class="chapter-label">5.8 節</span>
+                <h3>Agent クラスのサンプルコードにおける型定義と互換用の調整</h3>
+                <a class="anchor" href="#ch05-8-agent-implementation">#</a>
+              </header>
+              <dl>
+                <dt>本書の記述</dt>
+                <dd>
+                  <p>本書 5.8 節「Agentクラスの完全なソースコード」では、シンプルな思考ループが記述されています。</p>
+                </dd>
+                <dt>症状・考慮事項</dt>
+                <dd>
+                  <p>本書の記述通りに TypeScript の strict モード下で開発を行う場合、各ツールの引数定義の不整合による型チェックエラーが発生します。また、付録 A のストリーミング機能を後続章の CLI から呼び出す際にもビルドエラーが発生します。</p>
+                </dd>
+                <dt>対処</dt>
+                <dd>
+                  <p>サンプルコードの <code>src/core/agent.ts</code> は、本書の記述通りの思考ループが実装されていますが、TypeScript のビルドを通すため、および付録 A との互換性のために、以下の最小限の追加が行われています。</p>
+                  
+                  <h4>1. TypeScript の厳密な関数引数チェック（strictFunctionTypes）への対応</h4>
+                  <p>本書の記述通りに <code>tools: Record&lt;string, Tool&gt;</code> と定義した状態で、各ツールの具体的な引数型（例: <code>readFileExecute(args: { path: string })</code>）を持つ関数を代入しようとすると、TypeScript の strict モード下では型代入の互換性エラーが発生します。サンプルコードでは、書籍と同じ記述を維持したままビルドを通すため、<code>tsconfig.json</code> に <code>"strictFunctionTypes": false</code> を設定してこれを解消しています。</p>
+
+                  <h4>2. ストリーミング機能用のフラグ定義（付録 A との互換性）</h4>
+                  <p>付録 A のストリーミング機能をCLIから利用する際にプロパティの不整合によるビルドエラーを防ぐため、コンストラクタおよび <code>AgentConfig</code> に <code>useStreaming</code> フラグが定義されています。</p>
+                </dd>
+              </dl>
+            </article>
+
+            <article id="ch05-8-agent-demo-filename">
+              <header>
+                <span class="chapter-label">5.8 節</span>
+                <h3>動作確認スクリプトのファイル名と配置</h3>
+                <a class="anchor" href="#ch05-8-agent-demo-filename">#</a>
+              </header>
+              <dl>
+                <dt>本書の記載</dt>
+                <dd>
+                  <p>5.8 節の「使用例」のコードブロックで <code>// src/05-coding-agent.ts</code> とコメントされています。</p>
+                </dd>
+                <dt>症状</dt>
+                <dd>
+                  <p>サンプルコードには <code>src/05-coding-agent.ts</code> は存在せず、実行方法についての記載もありません。</p>
+                </dd>
+                <dt>対処</dt>
+                <dd>
+                  <p>サンプルコードでは、ファイル配置を他の章の動作確認スクリプトと統一するため <code>chapters/05-coding-agent.ts</code> に配置し、インポートパスを調整しています。以下のコマンドで実行してください。</p>
+                  <pre><code>bun run chapters/05-coding-agent.ts</code></pre>
+                </dd>
+              </dl>
+            </article>
+          </section>
+
+          <section class="chapter-group">
   <h2>第 6 章</h2>
 
   <article id="ch06-4-create-model-from-env">
     <header>
       <span class="chapter-label">6.4 節</span>
-      <h3><code>createModelFromEnv</code> と配布リポジトリ実装の差異</h3>
+      <h3><code>createModelFromEnv</code> とサンプルコードの実装の差異</h3>
       <a class="anchor" href="#ch06-4-create-model-from-env">#</a>
     </header>
     <dl>
@@ -514,17 +574,17 @@ export { execCommand } from './execCommand';</code></pre>
       </dd>
       <dt>症状</dt>
       <dd>
-        <p>本書のコードをそのまま写経して進める範囲では問題なく動作します。ただし、配布リポジトリの <code>src/providers/modelFactory.ts</code> は付録 B（Responses API 対応）を含む拡張のため、次の 3 点で本書の記載と異なります。</p>
+        <p>本書のコードをそのまま写経して進める範囲では問題なく動作します。ただし、サンプルコードの <code>src/providers/modelFactory.ts</code> は付録 B（Responses API 対応）を含む拡張のため、次の 3 点で本書の記載と異なります。</p>
         <ul>
           <li><strong>シグネチャ</strong>：<code>createModelFromEnv(options?: { useResponses?: boolean })</code> のように Responses API の切替オプションを受け取ります。</li>
           <li><strong><code>LLM_API_KEY</code> の扱い</strong>：未設定時に明示的に <code>throw</code> します（本書版はサイレント通過のため、後段の SDK 呼び出しで <code>401</code> として現れます）。</li>
           <li><strong>API キーの渡し方</strong>：<code>createOpenAI({ apiKey })</code> のように直接引数で渡します（本書版は <code>process.env.&lt;PROVIDER&gt;_API_KEY</code> への代入経由）。</li>
         </ul>
-        <p>このため、配布リポジトリの <code>bin/cli.ts --responses</code>（付録 B）を試そうとすると、本書版の <code>createModelFromEnv</code> には <code>useResponses</code> 切替が存在せず、付録 B のサンプルどおりに動作させられません。</p>
+        <p>このため、サンプルコードの <code>bin/cli.ts --responses</code>（付録 B）を試そうとすると、本書版の <code>createModelFromEnv</code> には <code>useResponses</code> 切替が存在せず、付録 B のサンプルどおりに動作させられません。</p>
       </dd>
       <dt>対処</dt>
       <dd>
-        <p>本書の章を順に進める読者は、本書のコードのままで問題ありません。配布リポジトリのコードを参照する場合や、付録 B（Responses API 対応）を試す場合は、リポジトリの <code>src/providers/modelFactory.ts</code> の実装を参照してください。</p>
+        <p>本書の章を順に進める読者は、本書のコードのままで問題ありません。サンプルコードを参照する場合や、付録 B（Responses API 対応）を試す場合は、サンプルコードの <code>src/providers/modelFactory.ts</code> の実装を参照してください。</p>
         <p>Responses API 切替を本書版に最小限取り込みたい場合は、OpenAI ケースに次の分岐を加える方法があります。</p>
         <pre><code>case 'openai': {
   if (apiKey &amp;&amp; !process.env.OPENAI_API_KEY) {
@@ -537,7 +597,125 @@ export { execCommand } from './execCommand';</code></pre>
       </dd>
       <dt>補足</dt>
       <dd>
-        <p>同様の経緯で、本書 6.4 節のコード片では Google ケースの API キーに <code>process.env.GOOGLE_API_KEY</code> を使っていますが、配布リポジトリの <code>.env.example</code> および <code>src/providers/google.ts</code> は <code>GEMINI_API_KEY</code> を優先します（<code>GOOGLE_API_KEY</code> もフォールバックとして読みます）。本書のコードは引き続き動作しますが、リポジトリの環境変数名は <code>GEMINI_API_KEY</code> である点に留意してください。</p>
+        <p>同様の経緯で、本書 6.4 節のコード片では Google ケースの API キーに <code>process.env.GOOGLE_API_KEY</code> を使っていますが、サンプルコードの <code>.env.example</code> および <code>src/providers/google.ts</code> は <code>GEMINI_API_KEY</code> を優先します（<code>GOOGLE_API_KEY</code> もフォールバックとして読みます）。本書のコードは引き続き動作しますが、サンプルコードの環境変数名は <code>GEMINI_API_KEY</code> である点に留意してください。</p>
+      </dd>
+    </dl>
+  <article id="ch06-5-manage-context-api-error">
+    <header>
+      <span class="chapter-label">6.5 節</span>
+      <h3>履歴圧縮（<code>manageContext</code>）時の各 LLM API でのメッセージ不整合エラー</h3>
+      <a class="anchor" href="#ch06-5-manage-context-api-error">#</a>
+    </header>
+    <dl>
+      <dt>本書の記述</dt>
+      <dd>
+        <p>本書 6.5 節で実装する <code>manageContext</code> メソッドは、文字数が 30,000文字 を超えた場合に中間メッセージ（古いツール実行結果など）を古い順から削減します。</p>
+      </dd>
+      <dt>症状</dt>
+      <dd>
+        <p>メッセージ履歴を単純に古いものから削除すると、ツール呼び出し要求（<code>tool_calls</code> を含む <code>assistant</code> メッセージ）と、その実行結果（<code>tool</code> メッセージ）のどちらか片方だけが削除される状況が発生します。OpenAI や Anthropic 等の主要な API プロバイダは、これらの親子関係の整合性を厳しく検証するため、不整合があるメッセージ履歴を送信すると、<code>400 Bad Request</code> エラー（例: OpenAI の <code>messages must contain the tool call message...</code> や Anthropic の <code>tool_use block without corresponding tool_result</code>）が発生してプログラムが強制終了してしまいます。</p>
+      </dd>
+      <dt>対処とサンプルコードでの調整</dt>
+      <dd>
+        <p>本書のコード設計との同一性を最優先するため、配布コード（<code>nano-code</code>）の各プロバイダ内では <code>cleanMessages</code> による自動クリーンアップはデフォルトで無効化（コメントアウト）されており、書籍通りのシンプルなメッセージ変換ロジックが動作するようになっています。</p>
+        <p>実用において長時間の対話を行い 400 エラーが発生する場合は、各プロバイダファイル（<code>src/providers/openai.ts</code>、<code>src/providers/anthropic.ts</code>、<code>src/providers/google.ts</code>）の末尾コメントに記載されているクリーンアップ用のコード例（<code>cleanMessages</code> および <code>convertMessages</code> の書き換え例）を適用してください。</p>
+        
+        <h4>各プロバイダでの具体的な変更手順</h4>
+        <p>以下は、各プロバイダで <code>cleanMessages</code> によるクリーンアップ処理を有効化する際のコードの変更例です。</p>
+        
+        <h5>1. OpenAI プロバイダ (<code>src/providers/openai.ts</code>)</h5>
+        <pre><code class="language-typescript">// convertMessages 内で cleanMessages を適用するように変更します
+function convertMessages(messages: Message[]) {
+-   return messages.map((m) => {
++   const cleaned = cleanMessages(messages);
++   return cleaned.map((m) => {
+        // (中身は変更なし)
+    });
+}</code></pre>
+
+        <h5>2. Anthropic プロバイダ (<code>src/providers/anthropic.ts</code>)</h5>
+        <pre><code class="language-typescript">// convertMessages 内で cleanMessages を適用するように変更します
+function convertMessages(messages: Message[]) {
+-   return messages
++   const cleaned = cleanMessages(messages);
++   return cleaned
+        .filter((m) => m.role !== 'system')
+        .map((m) => {
+            // (中身は変更なし)
+        });
+}</code></pre>
+
+        <h5>3. Google プロバイダ (<code>src/providers/google.ts</code>)</h5>
+        <pre><code class="language-typescript">// convertMessages 内で cleanMessages を適用するように変更します
+function convertMessages(messages: Message[]) {
+-   return messages
++   const cleaned = cleanMessages(messages);
++   return cleaned
+        .filter((m) => m.role !== 'system')
+        .map((m) => {
+            // (中身は変更なし)
+        });
+}</code></pre>
+
+        <p>※ 各ファイルの末尾にある <code>cleanMessages</code> の定義（コメントアウトされているもの）のコメントを解除して有効化する必要があります。各プロバイダの末尾に実装されている <code>cleanMessages</code> 自体の処理は以下の通りです。</p>
+        <pre><code class="language-typescript">function cleanMessages(messages: Message[]): Message[] {
+    const existingToolCallIds = new Set(
+        messages
+            .filter((m) => m.role === 'tool')
+            .map((m) => (m as any).toolCallId)
+    );
+
+    const finalMessages: Message[] = [];
+    for (const msg of messages) {
+        if (msg.role === 'tool') {
+            let foundAssistant = false;
+            for (let j = finalMessages.length - 1; j >= 0; j--) {
+                const prev = finalMessages[j];
+                if (
+                    prev &&
+                    prev.role === 'assistant' &&
+                    'toolCalls' in prev &&
+                    prev.toolCalls
+                ) {
+                    if (
+                        prev.toolCalls.some(
+                            (tc: any) => tc.toolCallId === msg.toolCallId
+                        )
+                    ) {
+                        foundAssistant = true;
+                        break;
+                    }
+                }
+            }
+            if (foundAssistant) {
+                finalMessages.push(msg);
+            }
+        } else if (
+            msg.role === 'assistant' &&
+            'toolCalls' in msg &&
+            msg.toolCalls
+        ) {
+            const validToolCalls = msg.toolCalls.filter((tc: any) =>
+                existingToolCallIds.has(tc.toolCallId)
+            );
+            if (validToolCalls.length > 0) {
+                finalMessages.push({
+                    role: 'assistant',
+                    content: msg.content,
+                    toolCalls: validToolCalls,
+                } as Message);
+            } else {
+                finalMessages.push({
+                    role: 'assistant',
+                    content: msg.content,
+                } as Message);
+            }
+        } else {
+            finalMessages.push(msg);
+        }
+    }
+    return finalMessages;
+}</code></pre>
       </dd>
     </dl>
   </article>
@@ -643,7 +821,7 @@ ${issueText}
       </dd>
       <dt>症状</dt>
       <dd>
-        <p>配布リポジトリに <code>src/index.ts</code> は存在しません。CLI のエントリポイントは <code>bin/cli.ts</code> です。本書のコマンドをそのまま実行すると、Bun がモジュールを解決できず次のエラーで即終了します。</p>
+        <p>サンプルコードに <code>src/index.ts</code> は存在しません。CLI のエントリポイントは <code>bin/cli.ts</code> です。本書のコマンドをそのまま実行すると、Bun がモジュールを解決できず次のエラーで即終了します。</p>
         <pre><code>error: Module not found "src/index.ts"</code></pre>
       </dd>
       <dt>対処</dt>
@@ -672,10 +850,10 @@ ${issueText}
                   <pre><code>const id = part.functionCall.name;
 toolCalls[id] = { toolCallId: id, name: part.functionCall.name, ... };</code></pre>
                 </dd>
-                <dt>配布コードとの差異</dt>
+                <dt>サンプルコードとの差異</dt>
                 <dd>
                   <p>書籍のスニペット通りに実装した場合、同一関数を複数回呼び出すレスポンス（例：<code>readFile</code> を 2 回呼んで異なるファイルを読む）では、後の呼び出しが前の呼び出しを上書きしてしまい、ツール呼び出しが欠落します。</p>
-                  <p>配布リポジトリでは <code>doGenerate</code>（非ストリーミング）との一貫性を保ちつつ、この問題を回避するため、連番方式（<code>call_0</code>、<code>call_1</code>、…）に変更しています。</p>
+                  <p>サンプルコードでは <code>doGenerate</code>（非ストリーミング）との一貫性を保ちつつ、この問題を回避するため、連番方式（<code>call_0</code>、<code>call_1</code>、…）に変更しています。</p>
                   <pre><code>let toolCallIndex = 0;
 // ...
 const id = `call_${toolCallIndex++}`;
@@ -683,7 +861,7 @@ toolCalls[id] = { toolCallId: id, name: part.functionCall.name, ... };</code></p
                 </dd>
                 <dt>対処</dt>
                 <dd>
-                  <p>書籍どおりに写経して進める場合、単一の関数を呼び出すユースケースでは問題なく動作します。同一関数の複数回呼び出しを正しく扱いたい場合は、配布コードの連番方式を採用してください。</p>
+                  <p>書籍どおりに写経して進める場合、単一の関数を呼び出すユースケースでは問題なく動作します。同一関数の複数回呼び出しを正しく扱いたい場合は、サンプルコードの連番方式を採用してください。</p>
                 </dd>
               </dl>
             </article>
@@ -699,10 +877,10 @@ toolCalls[id] = { toolCallId: id, name: part.functionCall.name, ... };</code></p
                 <dd>
                   <p>付録 A の <code>doGenerate</code> および <code>doStream</code> スニペットでは、OpenAI が返すツール引数の JSON 文字列を <code>JSON.parse()</code> で直接パースしています。</p>
                 </dd>
-                <dt>配布コードとの差異</dt>
+                <dt>サンプルコードとの差異</dt>
                 <dd>
                   <p>OpenAI API がネットワーク障害・プロキシ介入等の影響で不正な JSON を返した場合、<code>JSON.parse()</code> が <code>SyntaxError</code> をスローし、<code>catch</code> ブロックの <code>OpenAI.APIError</code> チェックをすり抜けて呼び出し元に伝播します。</p>
-                  <p>配布リポジトリでは <code>parseToolCallArgs()</code> ヘルパーを用い、パース失敗時は <code>{}</code>（空オブジェクト）を返すことで <code>SyntaxError</code> の伝播を防いでいます。</p>
+                  <p>サンプルコードでは <code>parseToolCallArgs()</code> ヘルパーを用い、パース失敗時は <code>{}</code>（空オブジェクト）を返すことで <code>SyntaxError</code> の伝播を防いでいます。</p>
                 </dd>
                 <dt>対処</dt>
                 <dd>
