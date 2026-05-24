@@ -33,7 +33,7 @@ export type Usage = {
   totalTokens?: number;
 };
 
-// 書籍本文（第3章）には直接の定義はないが、各プロバイダー間の整合性と保守性のために補足として追加した型
+// 各プロバイダーで共通して使う終了理由。
 export type FinishReason = 'stop' | 'length' | 'content_filter' | 'tool_calls' | 'error';
 
 // 統一されたLLMレスポンス

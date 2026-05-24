@@ -4,6 +4,7 @@ import { execCommand } from './execCommand';
 
 const WORKSPACE_ROOT = join(process.cwd(), 'workspace');
 
+// CLI 引数として安全に渡せる Git ref に絞る。
 function validateBranchName(name: string): void {
     if (!name || name.length > 120) {
         throw new Error('ブランチ名が不正です');
@@ -22,6 +23,7 @@ function validateBranchName(name: string): void {
     }
 }
 
+// `git add -- <file>` に分けて渡せるよう、ファイルパスを最低限検証する。
 function validateFilePath(filePath: string): void {
     if (!filePath) {
         throw new Error('ファイルパスが空です');
@@ -34,6 +36,7 @@ function validateFilePath(filePath: string): void {
     }
 }
 
+// 引用符や改行を含むメッセージも扱えるよう、一時ファイル経由で渡す。
 function writeTempFile(content: string, prefix: string): string {
     if (!existsSync(WORKSPACE_ROOT)) {
         mkdirSync(WORKSPACE_ROOT, { recursive: true });
@@ -45,7 +48,7 @@ function writeTempFile(content: string, prefix: string): string {
 
 export const createBranch = {
     name: 'createBranch',
-    description: '新しい Git ブランチを作成する。既存ブランチがある場合は現在HEADへ強制リセットする。',
+    description: '新しいGitブランチを作成。既存ブランチがある場合は強制リセット',
     needsApproval: true,
     parameters: {
         type: 'object',
@@ -75,7 +78,7 @@ export const createBranch = {
 
 export const commit = {
     name: 'commit',
-    description: 'メッセージ付きで変更をコミットする。変更がない場合はコミットしない。',
+    description: '変更をコミット',
     needsApproval: true,
     parameters: {
         type: 'object',
@@ -135,7 +138,7 @@ export const commit = {
 
 export const pushBranch = {
     name: 'pushBranch',
-    description: '現在のブランチをリモートリポジトリにプッシュする。新規ブランチの場合は上流を設定する。',
+    description: 'ブランチをリモートにプッシュ',
     needsApproval: true,
     parameters: {
         type: 'object',

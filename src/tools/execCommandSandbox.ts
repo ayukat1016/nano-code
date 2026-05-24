@@ -7,8 +7,12 @@ import { config } from '../config';
 import { parseCommand } from './execCommand';
 
 const WORKSPACE_ROOT = path.resolve(process.cwd(), './workspace');
-const ALLOWED_COMMANDS = ['bun', 'ls', 'git', 'gh'];
-const MAX_OUTPUT_LENGTH = 2000;
+// 許可されたコマンド
+// 第4章: bun, ls（基本的な動作確認とファイル一覧）
+// 第5〜6章: cat, grep, find, pwd, mkdir（思考ループとコーディング作業で使う調査・作成系コマンド）
+// 第7章: git, gh（ブランチ作成、コミット、プッシュ、PR作成、Issueコメント投稿）
+const ALLOWED_COMMANDS = ['bun', 'ls', 'cat', 'grep', 'find', 'pwd', 'mkdir', 'git', 'gh'];
+const MAX_OUTPUT_LENGTH = 2048;
 
 // 環境変数はホワイトリスト方式（機密情報の漏洩防止）
 const SAFE_ENV = {
@@ -22,6 +26,7 @@ type ExecCommandInput = {
     commandArgs?: unknown;
 };
 
+// Git/GitHub ツールから安全に引数配列を渡せるよう、commandName / commandArgs 形式も受け付ける。
 async function execCommandSandboxExecute(
     args: Record<string, unknown>
 ): Promise<string> {
@@ -32,7 +37,7 @@ async function execCommandSandboxExecute(
 
     if (typeof input.command === 'string') {
         const command = input.command;
-        const dangerousChars = /[;&`$]/;
+        const dangerousChars = /[;&`$|]/;
         if (dangerousChars.test(command)) {
             throw new Error('シェルメタ文字を含むコマンドは実行できません');
         }
@@ -61,7 +66,17 @@ async function execCommandSandboxExecute(
         throw new Error(`コマンド ${commandName} は許可されていません`);
     }
 
-    const dangerousPatterns = [/rm\s+-rf/, />\s*\/dev/, /curl.*\|.*sh/, /wget.*\|.*sh/];
+    // サンドボックス無効時でも危険なオプション指定を早めに拒否する。
+    const dangerousPatterns = [
+        /rm\s+-rf/,
+        />\s*\/dev/,
+        /curl.*\|.*sh/,
+        /wget.*\|.*sh/,
+        /\s+--git-dir\b/,
+        /\s+--work-tree\b/,
+        /\s+-exec\b/,
+        /\s+-delete\b/
+    ];
     for (const pattern of dangerousPatterns) {
         if (pattern.test(commandForCheck)) {
             throw new Error('危険なコマンドパターンが検出されました');

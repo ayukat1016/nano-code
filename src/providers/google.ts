@@ -18,7 +18,9 @@ export function createGoogle(config?: { apiKey?: string }): Provider {
 
     // メッセージをGoogle形式に変換
     function convertMessages(messages: Message[]) {
-        return messages
+        // 履歴圧縮後も、ツール呼び出しと結果の対応が壊れないように補正する。
+        const cleaned = cleanMessages(messages);
+        return cleaned
             .filter((m) => m.role !== 'system')
             .map((m) => {
                 // ツール結果はuserロール + functionResponse
@@ -125,8 +127,7 @@ export function createGoogle(config?: { apiKey?: string }): Provider {
                         ? functionCallParts.map((p: any, i: number) => ({
                               toolCallId: `call_${i}`, // Gemini APIはIDを返さないため生成
                               name: p.functionCall.name,
-                              // 引数なしの関数呼び出し時に args が null/undefined となる場合があるため
-                              // 配布コードでは書籍のスニペットから ?? {} を追加している
+                              // 引数なしの関数呼び出しでは args が空になる場合がある。
                               args: p.functionCall.args ?? {},
                           }))
                         : undefined;
@@ -204,9 +205,7 @@ export function createGoogle(config?: { apiKey?: string }): Provider {
                         }
 
                         if (part.functionCall) {
-                            // 書籍付録Aのスニペットでは関数名をそのままIDとして使用しているが、
-                            // 同一関数の複数回呼び出し時に後の呼び出しが前を上書きしてしまう問題があるため、
-                            // 配布コードでは doGenerate と同様に連番式 ID（call_0, call_1, ...）を使用する。
+                            // 同一関数を複数回呼び出しても上書きしないよう、連番の ID を使う。
                             const id = `call_${toolCallIndex++}`;
                             toolCalls[id] = {
                                 toolCallId: id,
@@ -257,33 +256,11 @@ export function createGoogle(config?: { apiKey?: string }): Provider {
     });
 }
 
-/*
-// ==========================================
-// 実用上のAPI不整合エラー（400）対策の変更例
-// ==========================================
-// 第6章「6.5 manageContextメソッドの実装」で導入される履歴圧縮（会話履歴の自動削減）によって
-// 過去のメッセージがスライス・削減された際、ツール呼び出し（functionCall）と実行結果（functionResponse）の
-// 親子関係（対となるペア）が壊れることで、Google Gen AI API が 400 Bad Request エラーを返すようになる実用上の問題があります。
-// 
-// これを防ぐため、convertMessages を以下のように書き換え、クリーンアップ関数（cleanMessages）を適用してください。
-
-// 変更例 (convertMessages 内で cleanMessages を適用する):
-//
-//  function convertMessages(messages: Message[]) {
-// -    return messages
-// +    const cleaned = cleanMessages(messages);
-// +    return cleaned
-//          .filter((m) => m.role !== 'system')
-//          .map((m) => {
-//              // (中身は変更なし)
-//          });
-//  }
-
 function cleanMessages(messages: Message[]): Message[] {
     const existingToolCallIds = new Set(
         messages
-            .filter(m => m.role === 'tool')
-            .map(m => (m as any).toolCallId)
+            .filter((m) => m.role === 'tool')
+            .map((m) => (m as any).toolCallId)
     );
 
     const finalMessages: Message[] = [];
@@ -292,8 +269,17 @@ function cleanMessages(messages: Message[]): Message[] {
             let foundAssistant = false;
             for (let j = finalMessages.length - 1; j >= 0; j--) {
                 const prev = finalMessages[j];
-                if (prev && prev.role === 'assistant' && 'toolCalls' in prev && prev.toolCalls) {
-                    if (prev.toolCalls.some((tc: any) => tc.toolCallId === msg.toolCallId)) {
+                if (
+                    prev &&
+                    prev.role === 'assistant' &&
+                    'toolCalls' in prev &&
+                    prev.toolCalls
+                ) {
+                    if (
+                        prev.toolCalls.some(
+                            (tc: any) => tc.toolCallId === msg.toolCallId
+                        )
+                    ) {
                         foundAssistant = true;
                         break;
                     }
@@ -302,25 +288,39 @@ function cleanMessages(messages: Message[]): Message[] {
             if (foundAssistant) {
                 finalMessages.push(msg);
             }
-        } else if (msg.role === 'assistant' && 'toolCalls' in msg && msg.toolCalls) {
-            const validToolCalls = msg.toolCalls.filter((tc: any) => existingToolCallIds.has(tc.toolCallId));
+        } else if (
+            msg.role === 'assistant' &&
+            'toolCalls' in msg &&
+            msg.toolCalls
+        ) {
+            const validToolCalls = msg.toolCalls.filter((tc: any) =>
+                existingToolCallIds.has(tc.toolCallId)
+            );
             if (validToolCalls.length > 0) {
                 finalMessages.push({
                     role: 'assistant',
                     content: msg.content,
-                    toolCalls: validToolCalls
+                    toolCalls: validToolCalls,
                 } as Message);
             } else {
                 finalMessages.push({
                     role: 'assistant',
-                    content: msg.content
+                    content: msg.content,
                 } as Message);
             }
         } else {
             finalMessages.push(msg);
         }
     }
+
+    // system メッセージを除いた結果が空になるのを防ぐ
+    const nonSystemMessages = finalMessages.filter(m => m.role !== 'system');
+    if (nonSystemMessages.length === 0) {
+        finalMessages.push({
+            role: 'user',
+            content: '続けてください。'
+        });
+    }
+
     return finalMessages;
 }
-*/
-

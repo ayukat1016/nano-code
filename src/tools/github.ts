@@ -4,6 +4,7 @@ import { join } from 'path';
 
 const WORKSPACE_ROOT = join(process.cwd(), 'workspace');
 
+// gh コマンドの引数として安全に渡せる Git ref に絞る。
 function validateBranchName(name: string): void {
     if (!name || name.length > 120) {
         throw new Error('ブランチ名が不正です');
@@ -17,8 +18,12 @@ function validateBranchName(name: string): void {
     if (!/^[A-Za-z0-9._/-]+$/.test(name)) {
         throw new Error('ブランチ名に使用できない文字が含まれています');
     }
+    if (name.includes('..') || name.includes('//') || name.endsWith('/') || name.endsWith('.')) {
+        throw new Error('ブランチ名形式が不正です');
+    }
 }
 
+// PR タイトルを gh の `--title` 引数として渡せる形に制限する。
 function validateTitle(title: string): void {
     if (!title || title.length > 200) {
         throw new Error('PRタイトルが不正です');
@@ -39,7 +44,7 @@ function writeTempFile(content: string, prefix: string): string {
 
 export const createPullRequest = {
     name: 'createPullRequest',
-    description: 'GitHub CLI を使って PR を作成する。既存のPRがある場合は更新する。',
+    description: 'ghコマンドを使ってPRを作成する。既存PRがあれば更新',
     needsApproval: true,
     parameters: {
         type: 'object',
@@ -108,7 +113,7 @@ export const createPullRequest = {
 
 export const createIssueComment = {
     name: 'createIssueComment',
-    description: 'GitHub CLI を使って指定されたIssueにコメントを投稿する',
+    description: 'Issueにコメントを投稿する',
     needsApproval: true,
     parameters: {
         type: 'object',

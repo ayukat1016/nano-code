@@ -6,22 +6,20 @@ import type { Tool } from '../types';
 const WORKSPACE_ROOT = path.resolve(process.cwd(), './workspace');
 
 // 許可されたコマンド
-// 本書では ['bun', 'ls', 'git', 'gh'] だが、後続の章でエージェントが
-// cat/grep/find/pwd/mkdir などを多用して自律動作するため許可コマンドを追加。
+// 第4章: bun, ls（基本的な動作確認とファイル一覧）
+// 第5〜6章: cat, grep, find, pwd, mkdir（思考ループとコーディング作業で使う調査・作成系コマンド）
+// 第7章: git, gh（ブランチ作成、コミット、プッシュ、PR作成、Issueコメント投稿）
 const ALLOWED_COMMANDS = ['bun', 'ls', 'cat', 'grep', 'find', 'pwd', 'mkdir', 'git', 'gh'];
 
 // 出力サイズの上限（文字数）
-const MAX_OUTPUT_LENGTH = 2048; // 本書の 2048 文字制限に揃える
+const MAX_OUTPUT_LENGTH = 2048;
 
 // 危険な文字の正規表現
 const dangerousChars = /[;&`$|]/;
 
 type Quote = '"' | "'" | null;
 
-// Google (Gemini) や Anthropic の Function Calling で、
-// LLMが引数をオブジェクト（commandName, commandArgs）で返してくるケースに対応するための機能拡張。
-// ※本書のスキーマ定義（commandプロパティのみを要求する形）と整合させつつ、一部のプロバイダー（SDK）の
-//   挙動の違いを安全に吸収するための、配布リポジトリ独自の内部的な互換処理です。
+// 一部プロバイダーが返す commandName / commandArgs 形式も受け付ける。
 type ExecCommandInput = {
     command?: unknown;
     commandName?: unknown;
@@ -103,17 +101,7 @@ export function parseCommand(input: string): string[] {
     return tokens;
 }
 
-// ============================
-// execCommandExecute：安全なコマンド実行
-// ============================
-// 【本書の記述との差異】
-// 本文で紹介している execCommand の実装はシンプルですが、本コードでは以下の堅牢化を行っています：
-// 1. 引数のオブジェクト対応：GeminiやAnthropicで引数が commandName / commandArgs で返るケースをサポート
-// 2. 危険コマンド検知：rm -rf や curl|sh などの破壊的コマンドを事前にブロック（dangerousPatterns）
-// 3. 厳格なパス検証：引数の相対パスや絶対パスによるワークスペース外へのアクセス防御を強化
-// 4. コマンド失敗時の例外スロー：終了コード非ゼロ時に reject(new Error) してエージェントに失敗を認識させる
-// ※なお、4.5節の解説スニペットでは関数名が execCommand となっていますが、オブジェクト名との名前衝突を
-//   避けるため、本書の最終コードと同様に execCommandExecute と命名しています。
+// 安全なコマンド実行。
 async function execCommandExecute(args: Record<string, unknown>): Promise<string> {
     const input = args as ExecCommandInput;
     let commandName = '';
@@ -155,15 +143,7 @@ async function execCommandExecute(args: Record<string, unknown>): Promise<string
         throw new Error(`コマンド ${commandName} は許可されていません`);
     }
 
-    // 【実用上のセキュリティ強化】
-    // 本書に記載の危険パターン検知（dangerousPatterns）は簡易的なチェックです。
-    // 許可されたコマンドであっても、find -exec や git --git-dir のように、
-    // オプションや引数の値に危険なパラメータが指定されると検知をすり抜ける制限があります。
-    // このコードでは、実用上の安全性を高めるため、そうした危険なオプションもパターンに追加してブロックしています。
-    // 実務でサンドボックスなしで運用する場合は、実行可能なサブコマンドなどを厳しく絞り込む対策を推奨します。
-
-    // 本書には記述されていないが、rm -rf などの破壊的なコマンドや外部スクリプトの
-    // 実行、および危険なオプション指定を水際で防御するためのセキュリティ上の追加機能。
+    // 許可コマンド内でも危険なオプション指定は拒否する。
     const dangerousPatterns = [
         /rm\s+-rf/,
         />\s*\/dev/,

@@ -22,7 +22,9 @@ export function createAnthropic(config?: {
 
     // systemメッセージを分離して変換
     function convertMessages(messages: Message[]) {
-        return messages
+        // 履歴圧縮後も、ツール呼び出しと結果の対応が壊れないように補正する。
+        const cleaned = cleanMessages(messages);
+        return cleaned
             .filter((m) => m.role !== 'system')
             .map((m) => {
                 // ツール結果はuserロール + tool_resultブロック
@@ -275,33 +277,11 @@ export function createAnthropic(config?: {
     });
 }
 
-/*
-// ==========================================
-// 実用上のAPI不整合エラー（400）対策の変更例
-// ==========================================
-// 第6章「6.5 manageContextメソッドの実装」で導入される履歴圧縮（会話履歴の自動削減）によって
-// 過去のメッセージがスライス・削減された際、ツール呼び出し（tool_use）と実行結果（tool_result）の
-// 親子関係（対となるペア）が壊れることで、Anthropic API が 400 Bad Request エラーを返すようになる実用上の問題があります。
-// 
-// これを防ぐため、convertMessages を以下のように書き換え、クリーンアップ関数（cleanMessages）を適用してください。
-
-// 変更例 (convertMessages 内で cleanMessages を適用する):
-//
-//  function convertMessages(messages: Message[]) {
-// -    return messages
-// +    const cleaned = cleanMessages(messages);
-// +    return cleaned
-//          .filter((m) => m.role !== 'system')
-//          .map((m) => {
-//              // (中身は変更なし)
-//          });
-//  }
-
 function cleanMessages(messages: Message[]): Message[] {
     const existingToolCallIds = new Set(
         messages
-            .filter(m => m.role === 'tool')
-            .map(m => (m as any).toolCallId)
+            .filter((m) => m.role === 'tool')
+            .map((m) => (m as any).toolCallId)
     );
 
     const finalMessages: Message[] = [];
@@ -310,8 +290,17 @@ function cleanMessages(messages: Message[]): Message[] {
             let foundAssistant = false;
             for (let j = finalMessages.length - 1; j >= 0; j--) {
                 const prev = finalMessages[j];
-                if (prev && prev.role === 'assistant' && 'toolCalls' in prev && prev.toolCalls) {
-                    if (prev.toolCalls.some((tc: any) => tc.toolCallId === msg.toolCallId)) {
+                if (
+                    prev &&
+                    prev.role === 'assistant' &&
+                    'toolCalls' in prev &&
+                    prev.toolCalls
+                ) {
+                    if (
+                        prev.toolCalls.some(
+                            (tc: any) => tc.toolCallId === msg.toolCallId
+                        )
+                    ) {
                         foundAssistant = true;
                         break;
                     }
@@ -320,24 +309,39 @@ function cleanMessages(messages: Message[]): Message[] {
             if (foundAssistant) {
                 finalMessages.push(msg);
             }
-        } else if (msg.role === 'assistant' && 'toolCalls' in msg && msg.toolCalls) {
-            const validToolCalls = msg.toolCalls.filter((tc: any) => existingToolCallIds.has(tc.toolCallId));
+        } else if (
+            msg.role === 'assistant' &&
+            'toolCalls' in msg &&
+            msg.toolCalls
+        ) {
+            const validToolCalls = msg.toolCalls.filter((tc: any) =>
+                existingToolCallIds.has(tc.toolCallId)
+            );
             if (validToolCalls.length > 0) {
                 finalMessages.push({
                     role: 'assistant',
                     content: msg.content,
-                    toolCalls: validToolCalls
+                    toolCalls: validToolCalls,
                 } as Message);
             } else {
                 finalMessages.push({
                     role: 'assistant',
-                    content: msg.content
+                    content: msg.content,
                 } as Message);
             }
         } else {
             finalMessages.push(msg);
         }
     }
+
+    // system メッセージを除いた結果が空になるのを防ぐ
+    const nonSystemMessages = finalMessages.filter(m => m.role !== 'system');
+    if (nonSystemMessages.length === 0) {
+        finalMessages.push({
+            role: 'user',
+            content: '続けてください。'
+        });
+    }
+
     return finalMessages;
 }
-*/
