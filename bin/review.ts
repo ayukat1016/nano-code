@@ -9,7 +9,7 @@ import * as fsPromises from 'fs/promises';
 import { join, resolve, sep } from 'path';
 import { config } from '../src/config';
 import { spawn } from 'child_process';
-import type { Tool } from '../src/types';
+import type { Tool, LanguageModel, Message } from '../src/types';
 
 // 機密情報をマスクする（ログ出力用）
 function maskSecret(value: string | undefined): string {
@@ -403,9 +403,29 @@ async function main() {
 
     const model = createModelFromEnv({ useResponses: false });
 
+    // 履歴圧縮（manageContext）による API 400 不整合エラーを防ぐための安全なラッパー
+    const secureModel: LanguageModel = {
+        async doGenerate(params) {
+            const cleanedParams = {
+                ...params,
+                messages: cleanMessages(params.messages),
+            };
+            return model.doGenerate(cleanedParams);
+        },
+        ...(model.doStream && {
+            async *doStream(params) {
+                const cleanedParams = {
+                    ...params,
+                    messages: cleanMessages(params.messages),
+                };
+                yield* model.doStream!(cleanedParams);
+            }
+        })
+    };
+
     const agent = new Agent({
         name: 'nano-code-reviewer',
-        model,
+        model: secureModel,
         instructions: prReviewInstructions,
         tools: {
             readFile: reviewReadFile,                           // PRレビュー用の制限緩和版
@@ -422,14 +442,11 @@ async function main() {
     });
 
     try {
-        const result = await agent.generate(`プルリクエスト #${prNumber} のコードレビューを行い、コメントを投稿してください。`);
+        await agent.generate(`プルリクエスト #${prNumber} のコードレビューを行い、コメントを投稿してください。`);
         
         if (isCI) {
              console.log('\n' + '─'.repeat(60));
              console.log(`[完了] レビューが正常に終了しました`);
-             if (result.usage) {
-                 console.log(`[使用トークン] ${result.usage.totalTokens} tokens`);
-             }
         }
     } catch (error) {
         console.error('\n' + '─'.repeat(60));
@@ -446,4 +463,86 @@ async function main() {
     }
 }
 
-main();
+export function cleanMessages(messages: Message[]): Message[] {
+    const existingToolCallIds = new Set(
+        messages
+            .filter((m) => m.role === 'tool')
+            .map((m) => (m as any).toolCallId)
+    );
+
+    const finalMessages: Message[] = [];
+    for (const msg of messages) {
+        if (msg.role === 'tool') {
+            let foundAssistant = false;
+            for (let j = finalMessages.length - 1; j >= 0; j--) {
+                const prev = finalMessages[j];
+                if (
+                    prev &&
+                    prev.role === 'assistant' &&
+                    'toolCalls' in prev &&
+                    prev.toolCalls
+                ) {
+                    if (
+                        prev.toolCalls.some(
+                            (tc: any) => tc.toolCallId === msg.toolCallId
+                        )
+                    ) {
+                        foundAssistant = true;
+                        break;
+                    }
+                }
+            }
+            if (!foundAssistant) {
+                // 親の assistant が manageContext によって削減されて消えている場合、
+                // 親子関係の整合性を保つため、ダミーの assistant (toolCalls) メッセージを自動挿入して補完する
+                finalMessages.push({
+                    role: 'assistant',
+                    content: 'ツールを実行します。',
+                    toolCalls: [{
+                        toolCallId: msg.toolCallId,
+                        name: msg.name,
+                        args: {}
+                    }]
+                } as Message);
+            }
+            finalMessages.push(msg);
+        } else if (
+            msg.role === 'assistant' &&
+            'toolCalls' in msg &&
+            msg.toolCalls
+        ) {
+            const validToolCalls = msg.toolCalls.filter((tc: any) =>
+                existingToolCallIds.has(tc.toolCallId)
+            );
+            if (validToolCalls.length > 0) {
+                finalMessages.push({
+                    role: 'assistant',
+                    content: msg.content,
+                    toolCalls: validToolCalls,
+                } as Message);
+            } else {
+                finalMessages.push({
+                    role: 'assistant',
+                    content: msg.content,
+                } as Message);
+            }
+        } else {
+            finalMessages.push(msg);
+        }
+    }
+
+    // 最終安全弁: system メッセージを除いた結果が空になるのを防ぐ
+    const nonSystemMessages = finalMessages.filter(m => m.role !== 'system');
+    if (nonSystemMessages.length === 0) {
+        finalMessages.push({
+            role: 'user',
+            content: '続けてください。'
+        });
+    }
+
+    return finalMessages;
+}
+
+if (import.meta.main) {
+    main();
+}

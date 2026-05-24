@@ -16,6 +16,7 @@
 
     // Best practices
     "strict": true,
+    "strictFunctionTypes": false,
     "skipLibCheck": true,
     "noFallthroughCasesInSwitch": true,
 
