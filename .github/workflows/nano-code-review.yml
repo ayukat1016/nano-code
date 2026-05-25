@@ -2,7 +2,7 @@ name: Nano Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 # 連続プッシュ時に実行中の古いジョブを自動キャンセルする設定
 concurrency:
