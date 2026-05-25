@@ -17,10 +17,7 @@ async function editFileExecute(args: {
     throw new Error(`アクセス拒否: ${args.path} はワークスペース外です`);
   }
 
-  // 【実用上のセキュリティ強化】
-  // 本書に記載の文字列比較（startsWith）のみでは、ワークスペース内に外部を指す
-  // シンボリックリンクが存在する場合にトラバーサルを許してしまう制限があります。
-  // そのため、ここではファイル読み込み前に実体パス（fs.realpath）を解決し、ワークスペース内であることを検証します。
+  // シンボリックリンク経由のトラバーサルを防ぐため、実体パスも検証する。
   let realPath: string;
   try {
     realPath = await fs.realpath(absolutePath);

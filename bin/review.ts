@@ -531,7 +531,7 @@ export function cleanMessages(messages: Message[]): Message[] {
         }
     }
 
-    // 最終安全弁: system メッセージを除いた結果が空になるのを防ぐ
+    // system メッセージを除いた結果が空になるのを防ぐ
     const nonSystemMessages = finalMessages.filter(m => m.role !== 'system');
     if (nonSystemMessages.length === 0) {
         finalMessages.push({
