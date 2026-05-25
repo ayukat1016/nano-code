@@ -80,10 +80,6 @@ async function main() {
     console.log(`Provider: ${provider || '(未設定)'}`);
     console.log(`Model: ${modelName || '(未設定)'}`);
     
-    if (isCI && apiKey) {
-        console.log(`::add-mask::${apiKey}`);
-    }
-    
     console.log(`Workspace: ${WORKSPACE_ROOT}`);
     if (isIssueDriven) {
         console.log('[モード] Issue駆動モード (CI)');
@@ -188,7 +184,7 @@ ${issueText}
             let message = error.message;
             // エラーメッセージ内の API キーをマスクする
             if (apiKey) {
-                message = message.replace(new RegExp(apiKey, 'g'), '***');
+                message = message.replace(new RegExp(apiKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '***');
             }
             console.error(`原因: ${message}`);
         }
