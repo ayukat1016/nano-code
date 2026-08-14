@@ -48,8 +48,12 @@ async function main() {
     // 2. なければ環境変数 ISSUE_BODY（手動入力）を使用
     // positionals は 8 章で --sandbox / --allowed-domains などのオプションを追加した統合版 CLI で、通常のタスク本文を受け取るために使う。
     let userPrompt = positionals.join(' ');
-    // Issueイベントで起動したときだけ、Issue 駆動向けの追加指示に切り替える。
-    const isIssueDriven = !userPrompt && process.env.GITHUB_EVENT_NAME === 'issues' && !!process.env.ISSUE_BODY;
+    // GitHub Actions 上で ISSUE_BODY からタスクを受け取る実行では、
+    // 手動トリガー / Issue トリガーのどちらでも PR 作成フロー用の指示を使う。
+    const isIssueDriven = !positionals.length && !!process.env.ISSUE_BODY && (
+        process.env.GITHUB_EVENT_NAME === 'issues' ||
+        process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
+    );
 
     if (!userPrompt) {
         userPrompt = process.env.ISSUE_BODY || '';
